@@ -1,0 +1,10 @@
+# 苗绣·识裳 — K1 板 riscv64 依赖
+# ONNX Runtime：进迭时空官方编译（riscv64 预编译）
+# pip install --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple spacemit-ort
+
+# 通用
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+Pillow>=10.0.0
+python-multipart>=0.0.12
+requests>=2.31.0

@@ -1,0 +1,107 @@
+# ============================================================
+# 苗绣·识裳 — K1 单板全功能方案
+# ============================================================
+# 模式 1：纯本地（默认，无需外部依赖）
+#   docker compose -f docker-compose.k1.yml up -d
+#   → YOLO + 内置知识库 + 性能监控，内存 ~500MB
+#
+# 模式 2：本地 Ollama LLM 对话（K1 6GB+ 内存，实验性）
+#   docker compose -f docker-compose.k1.yml --profile llm up -d
+#   → 含 Ollama + qwen2.5:0.5b，内存 ~2.5GB
+#
+# 模式 3：外接 PC Ollama（最稳定 LLM 方案）
+#   OLLAMA_HOST=http://192.168.1.50:11434 docker compose up -d
+#
+# 前置：PC 上 npm run build
+# 部署：bash deploy/deploy-k1-docker.sh root@192.168.x.x
+# ============================================================
+
+services:
+  # ========== 一体化服务（前端 + YOLO + LLM 代理 + 性能监控）==========
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.k1
+    image: miao-xiu:k1
+    container_name: miao-k1
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      - YOLO_MODEL=yolov8n.onnx
+      # LLM 后端：优先 ${OLLAMA_HOST}，其次 ollama 服务，最后内置知识库兜底
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:0.5b}
+      # K1 SDK 路径（语音功能）
+      # - SPACEMIT_NLP_DIR=/home/bainbu/spacemit-demo/examples/NLP
+    volumes:
+      - k1-models:/app/models
+      - k1-cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: ${APP_MEMORY:-2G}
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    networks:
+      - k1-net
+
+  # ========== Ollama LLM 推理引擎（可选，--profile llm 启用）==========
+  ollama:
+    image: ollama/ollama:latest
+    container_name: miao-ollama
+    restart: unless-stopped
+    profiles:
+      - llm
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=1        # K1 单线程推理
+      - OLLAMA_MAX_LOADED_MODELS=1    # 仅加载一个模型
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+    networks:
+      - k1-net
+
+networks:
+  k1-net:
+    driver: bridge
+
+volumes:
+  k1-models:
+  k1-cache:
+  ollama-data:

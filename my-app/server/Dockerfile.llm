@@ -1,0 +1,25 @@
+# ============================================================
+# 苗绣·识裳 — LLM 对话服务镜像（性能优化版）
+# 端口: 8001, API: POST /chat, POST /chat/stream, GET /health, GET /stats
+# ============================================================
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# ---- Layer 1: 依赖声明 ----
+COPY server/requirements_llm.txt /app/
+RUN pip install --no-cache-dir -r requirements_llm.txt
+
+# ---- Layer 2: 性能模块 ----
+COPY server/perf.py /app/
+
+# ---- Layer 3: 服务代码 ----
+COPY server/llm_server.py /app/
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "from urllib.request import urlopen; urlopen('http://localhost:8001/health')"
+
+ENV OLLAMA_HOST=http://ollama:11434
+ENV OLLAMA_MODEL=qwen2.5:0.5b
+EXPOSE 8001
+CMD ["python", "llm_server.py"]
