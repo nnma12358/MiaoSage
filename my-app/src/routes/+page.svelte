@@ -709,6 +709,34 @@ let micStream = null;                // 录音媒体流
     streamingText = '';
   }
 
+  // --- 轻量 Markdown → HTML（处理 AI 输出的 **粗体** / 标题 / 列表）---
+  function renderMarkdown(text) {
+    let html = text;
+    // 1. 粗体 **text**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // 2. 标题 ### Heading
+    html = html.replace(/^### (.+)$/gm, '<h4 class="md-heading">$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3 class="md-heading">$1</h3>');
+    // 3. 有序列表 1. item
+    html = html.replace(/^(\d+)\. (.+)$/gm, '<li class="md-li"><span class="md-num">$1.</span> $2</li>');
+    // 4. 无序列表 - item 或 * item
+    html = html.replace(/^[-*] (.+)$/gm, '<li class="md-li md-bullet">$1</li>');
+    // 5. 连续列表项包裹 <ul>
+    html = html.replace(/(<li class="md-li.*?<\/li>\n?)+/g, '<ul class="md-list">$&</ul>');
+    // 6. 段落：双换行
+    html = html.replace(/\n\n/g, '</p><p>');
+    // 7. 单换行 → <br>
+    html = html.replace(/\n/g, '<br/>');
+    // 8. 包裹顶层
+    html = '<p>' + html + '</p>';
+    // 9. 清理空段落
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    // 10. 清理嵌套问题：列表内不应有 <p>
+    html = html.replace(/<ul class="md-list"><p>/g, '<ul class="md-list">');
+    html = html.replace(/<\/p><\/ul>/g, '</ul>');
+    return html;
+  }
+
   // 快捷提问话术
   // ================================================================
   // 真实麦克风录音 + ASR 语音识别
@@ -1211,7 +1239,7 @@ let micStream = null;                // 录音媒体流
                   <span class="bubble-time">{msg.time}</span>
                 </div>
                 <div class="bubble-text">
-                  <p>{@html msg.content.replace(/\n/g, '<br/>')}</p>
+                  <p>{@html renderMarkdown(msg.content)}</p>
                 </div>
               </div>
             </div>
@@ -1230,7 +1258,7 @@ let micStream = null;                // 录音媒体流
                   <span class="bubble-time">● 输出中</span>
                 </div>
                 <div class="bubble-text">
-                  <p>{@html streamingText.replace(/\n/g, '<br/>')}<span class="cursor-blink">|</span></p>
+                  <p>{@html renderMarkdown(streamingText)}<span class="cursor-blink">|</span></p>
                 </div>
               </div>
             </div>
@@ -2068,7 +2096,10 @@ let micStream = null;                // 录音媒体流
   }
 
   .hidden-audio {
-    display: none;
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
   }
 
   /* ========== 未识别提示卡片 ========== */
@@ -2366,6 +2397,32 @@ let micStream = null;                // 录音媒体流
     font-size: 0.8rem;
     line-height: 1.55;
     color: #e8f0f8;
+  }
+
+  /* Markdown 渲染样式 */
+  .bubble-text :global(.md-heading) {
+    margin: 6px 0 3px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #d0e8ff;
+  }
+  .bubble-text :global(.md-list) {
+    margin: 4px 0;
+    padding-left: 16px;
+    list-style: none;
+  }
+  .bubble-text :global(.md-li) {
+    margin-bottom: 2px;
+  }
+  .bubble-text :global(.md-num) {
+    color: #a0c8e0;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .bubble-text :global(.md-bullet)::before {
+    content: '•';
+    color: #5ecfd1;
+    margin-right: 6px;
   }
 
   .assistant .bubble-text {
