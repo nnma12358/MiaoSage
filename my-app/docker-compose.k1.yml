@@ -1,5 +1,5 @@
 # ============================================================
-# 苗绣·识裳 — K1 多容器架构
+# 苗绣·识裳 — K1 多容器架构（8GB 内存优化版）
 # ============================================================
 # 4 个独立容器，host 网络模式，通过 localhost 互访
 #
@@ -12,8 +12,9 @@
 #   8001 → ASR 语音识别
 #   8002 → TTS 语音合成
 #
-# ⚠️ K1 仅 2GB 内存，4 容器总上限 ~1.6GB。
-#    若 OOM，可降低各容器 memory limit 或只启动部分服务。
+# 内存预算（K1 8GB 总量）：
+#   YOLO ~1.5G | ASR ~1G | TTS ~1.5G | Gateway ~512M
+#   容器总计 ~4.5G，留 ~3.5G 给 OS + Ollama
 # ============================================================
 
 services:
@@ -28,18 +29,24 @@ services:
     network_mode: host
     environment:
       - YOLO_MODEL=${YOLO_MODEL:-yolov8n.onnx}
+      # ONNX 线程优化（K1 8GB，放开线程限制）
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-4}
     volumes:
       - k1-cache:/root/.cache
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 500M
+          cpus: '3.0'
+          memory: 1536M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "2"
+        max-size: "20m"
+        max-file: "3"
 
   # ---- ASR 语音识别 ----
   asr:
@@ -61,13 +68,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 400M
+          cpus: '2.0'
+          memory: 1024M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "2"
+        max-size: "20m"
+        max-file: "3"
 
   # ---- TTS 语音合成 ----
   tts:
@@ -89,13 +99,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.5'
-          memory: 500M
+          cpus: '2.0'
+          memory: 1536M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "2"
+        max-size: "20m"
+        max-file: "3"
 
   # ---- API 网关 ----
   gateway:
@@ -127,16 +140,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 200M
+          cpus: '2.0'
+          memory: 512M
         reservations:
           cpus: '0.3'
-          memory: 64M
+          memory: 128M
     logging:
       driver: json-file
       options:
-        max-size: "10m"
-        max-file: "2"
+        max-size: "20m"
+        max-file: "3"
 
 volumes:
   k1-cache:
