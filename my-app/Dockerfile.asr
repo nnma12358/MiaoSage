@@ -12,9 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # SpacemiT ASR 依赖（NLP 模块挂载在运行时）
+# 全部从 spacemit 源装，避免 pydantic-core/Rust 编译
 RUN pip install --break-system-packages --no-cache-dir \
-    fastapi uvicorn soundfile python-multipart \
-    jieba cn2an kaldi-native-fbank webrtcvad
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    fastapi uvicorn soundfile python-multipart jieba cn2an kaldi-native-fbank webrtcvad && \
+    rm -rf /root/.cache/pip/*
 
 COPY server/asr_server.py /app/
 

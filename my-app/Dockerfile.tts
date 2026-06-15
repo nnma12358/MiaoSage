@@ -12,9 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# fastapi + TTS 依赖（全部 spacemit 源，避免 Rust 编译）
 RUN pip install --break-system-packages --no-cache-dir \
-    fastapi uvicorn soundfile python-multipart \
-    playsound g2p-en pypinyin
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    fastapi uvicorn soundfile python-multipart playsound g2p-en pypinyin && \
+    rm -rf /root/.cache/pip/*
 
 # transformers（TTS 英文文本处理）从 spacemit 安装
 # tokenizers wheel 由用户预编译，构建前放到 my-app/ 目录

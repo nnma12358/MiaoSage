@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 RUN pip install --break-system-packages --no-cache-dir \
-    fastapi uvicorn requests python-multipart
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    fastapi uvicorn requests python-multipart && \
+    rm -rf /root/.cache/pip/*
 
 # ---- 前端 SPA ----
 COPY build/ /app/build/
