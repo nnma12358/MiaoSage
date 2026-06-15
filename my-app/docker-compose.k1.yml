@@ -1,107 +1,142 @@
 # ============================================================
-# 苗绣·识裳 — K1 单板全功能方案
+# 苗绣·识裳 — K1 多容器架构
 # ============================================================
-# 模式 1：纯本地（默认，无需外部依赖）
-#   docker compose -f docker-compose.k1.yml up -d
-#   → YOLO + 内置知识库 + 性能监控，内存 ~500MB
+# 4 个独立容器，host 网络模式，通过 localhost 互访
 #
-# 模式 2：本地 Ollama LLM 对话（K1 6GB+ 内存，实验性）
-#   docker compose -f docker-compose.k1.yml --profile llm up -d
-#   → 含 Ollama + qwen2.5:0.5b，内存 ~2.5GB
+# 启动：
+#   docker compose -f docker-compose.k1.yml up -d --build
 #
-# 模式 3：外接 PC Ollama（最稳定 LLM 方案）
-#   OLLAMA_HOST=http://192.168.1.50:11434 docker compose up -d
+# 端口：
+#   443  → 网关（前端 SPA + API 路由）
+#   8000 → YOLO 检测
+#   8001 → ASR 语音识别
+#   8002 → TTS 语音合成
 #
-# 前置：PC 上 npm run build
-# 部署：bash deploy/deploy-k1-docker.sh root@192.168.x.x
+# ⚠️ K1 仅 2GB 内存，4 容器总上限 ~1.6GB。
+#    若 OOM，可降低各容器 memory limit 或只启动部分服务。
 # ============================================================
 
 services:
-  # ========== 一体化服务（前端 + YOLO + LLM 代理 + 性能监控）==========
-  app:
+  # ---- YOLO 检测 ----
+  yolo:
     build:
       context: .
-      dockerfile: Dockerfile.k1
-    image: miao-xiu:k1
-    container_name: miao-k1
+      dockerfile: Dockerfile.yolo
+    image: miao-xiu:yolo
+    container_name: miao-yolo
     restart: unless-stopped
-    ports:
-      - "80:80"
+    network_mode: host
     environment:
-      - YOLO_MODEL=yolov8n.onnx
-      # LLM 后端：优先 ${OLLAMA_HOST}，其次 ollama 服务，最后内置知识库兜底
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:0.5b}
-      # K1 SDK 路径（语音功能）
-      # - SPACEMIT_NLP_DIR=/home/bainbu/spacemit-demo/examples/NLP
+      - YOLO_MODEL=${YOLO_MODEL:-yolov8n.onnx}
     volumes:
-      - k1-models:/app/models
       - k1-cache:/root/.cache
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
     deploy:
       resources:
         limits:
-          cpus: '3.0'
-          memory: ${APP_MEMORY:-2G}
-        reservations:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '2.0'
+          memory: 500M
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "2"
-    networks:
-      - k1-net
 
-  # ========== Ollama LLM 推理引擎（可选，--profile llm 启用）==========
-  ollama:
-    image: ollama/ollama:latest
-    container_name: miao-ollama
+  # ---- ASR 语音识别 ----
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.asr
+    image: miao-xiu:asr
+    container_name: miao-asr
     restart: unless-stopped
-    profiles:
-      - llm
-    ports:
-      - "11434:11434"
+    network_mode: host
     environment:
-      - OLLAMA_KEEP_ALIVE=24h
-      - OLLAMA_HOST=0.0.0.0
-      - OLLAMA_NUM_PARALLEL=1        # K1 单线程推理
-      - OLLAMA_MAX_LOADED_MODELS=1    # 仅加载一个模型
+      - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
     volumes:
-      - ollama-data:/root/.ollama
+      - k1-cache:/root/.cache
+      - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
+      - /usr/lib/libortextensions.so:/usr/lib/libortextensions.so:ro
+      - /usr/lib/libortextensions.so.0:/usr/lib/libortextensions.so.0:ro
+      - /usr/lib/libortextensions.so.0.12.0:/usr/lib/libortextensions.so.0.12.0:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 400M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  # ---- TTS 语音合成 ----
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile.tts
+    image: miao-xiu:tts
+    container_name: miao-tts
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
+    volumes:
+      - k1-cache:/root/.cache
+      - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
+      - /usr/lib/libortextensions.so:/usr/lib/libortextensions.so:ro
+      - /usr/lib/libortextensions.so.0:/usr/lib/libortextensions.so.0:ro
+      - /usr/lib/libortextensions.so.0.12.0:/usr/lib/libortextensions.so.0.12.0:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 500M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  # ---- API 网关 ----
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.k1
+    image: miao-xiu:gateway
+    container_name: miao-gateway
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - yolo
+      - asr
+      - tts
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-instruct}
+      - YOLO_URL=http://127.0.0.1:8000
+      - ASR_URL=http://127.0.0.1:8001
+      - TTS_URL=http://127.0.0.1:8002
+    volumes:
+      - k1-cache:/root/.cache
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "curl", "-fk", "https://127.0.0.1:443/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 60s
     deploy:
       resources:
         limits:
-          cpus: '3.0'
-          memory: 3G
+          cpus: '1.0'
+          memory: 200M
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '0.3'
+          memory: 64M
     logging:
       driver: json-file
       options:
-        max-size: "20m"
+        max-size: "10m"
         max-file: "2"
-    networks:
-      - k1-net
-
-networks:
-  k1-net:
-    driver: bridge
 
 volumes:
-  k1-models:
   k1-cache:
-  ollama-data:

@@ -1,0 +1,35 @@
+# ============================================================
+# 苗绣·识裳 — TTS 语音合成微服务
+# ============================================================
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev build-essential \
+    libsndfile1 wget curl \
+    python3-scipy python3-numpy python3-nltk \
+    python3-yaml python3-regex python3-tqdm python3-click python3-joblib \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install --break-system-packages --no-cache-dir \
+    fastapi uvicorn soundfile python-multipart \
+    playsound g2p-en pypinyin
+
+# transformers（TTS 英文文本处理）从 spacemit 安装
+# tokenizers wheel 由用户预编译，构建前放到 my-app/ 目录
+RUN mkdir -p /tmp/wheels
+COPY tokenizer*.whl /tmp/wheels/
+RUN pip install --break-system-packages --no-cache-dir /tmp/wheels/tokenizer*.whl && \
+    pip install --break-system-packages --no-cache-dir \
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    transformers && \
+    rm -rf /root/.cache/pip/*
+
+COPY server/tts_server.py /app/
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8002/health || exit 1
+
+EXPOSE 8002
+CMD ["python3", "tts_server.py"]

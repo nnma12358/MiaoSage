@@ -91,27 +91,36 @@ if IS_K1:
 # YOLO 模型路径自动发现
 def _resolve_model() -> str:
     """按优先级查找模型文件：ONNX > PT"""
+    _server_dir = os.path.dirname(__file__)                       # server/
+    _project_dir = os.path.dirname(_server_dir)                   # miao-xiu-k1/
     candidates = [
-        YOLO_MODEL,
-        os.path.join(os.path.dirname(__file__), YOLO_MODEL),
-        "/app/models/" + YOLO_MODEL.replace(".onnx", ".pt"),
+        os.path.join(_server_dir, YOLO_MODEL),                    # server/yolov8n.onnx
+        os.path.join(_project_dir, YOLO_MODEL),                   # miao-xiu-k1/yolov8n.onnx
+        "/app/models/" + YOLO_MODEL,                               # Docker: /app/models/
+        "/app/models/" + YOLO_MODEL.replace(".onnx", ".pt"),      # Docker: .pt 兜底
     ]
     for c in candidates:
         if os.path.exists(c):
             logger.info(f"找到模型: {c}")
             return c
-    # 都不存在则尝试自动下载 ONNX
-    logger.info(f"模型 {YOLO_MODEL} 未找到，将尝试自动下载...")
+    # 都不存在则尝试直接下载 ONNX 模型（无需 ultralytics/PyTorch）
+    logger.info(f"模型 {YOLO_MODEL} 未找到，将尝试从 GitHub 下载...")
+    _url = f"https://github.com/ultralytics/assets/releases/download/v8.2.0/{YOLO_MODEL}"
+    _save_to = os.path.join(_server_dir, YOLO_MODEL)
     try:
-        from ultralytics import YOLO
-        tmp_model = YOLO("yolov8n.pt", verbose=False)
-        onnx_path = YOLO_MODEL if YOLO_MODEL.endswith(".onnx") else YOLO_MODEL + ".onnx"
-        tmp_model.export(format="onnx", imgsz=640, simplify=True)
-        if os.path.exists(onnx_path):
-            logger.info(f"✓ ONNX 模型已导出: {onnx_path}")
-            return onnx_path
+        r = http_requests.get(_url, timeout=180, stream=True)
+        if r.status_code == 200:
+            downloaded = 0
+            with open(_save_to, "wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+            logger.info(f"✓ ONNX 模型已下载: {_save_to} ({downloaded/1024/1024:.1f} MB)")
+            return _save_to
+        else:
+            logger.warning(f"下载失败 HTTP {r.status_code}: {_url}")
     except Exception as e:
-        logger.warning(f"自动下载失败: {e}，将使用 ultralytics 兜底")
+        logger.warning(f"自动下载失败: {e}")
     return YOLO_MODEL  # 返回原始路径，由 YOLODetector 自行兜底
 
 # ---------- 苗族系统提示 ----------
@@ -617,6 +626,8 @@ async def chat_stream(request: Request):
     }
 
     async def generate():
+        # 即时发送"思考中"状态，避免前端长时间白屏等待
+        yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
         try:
             resp = http_requests.post(
                 f"{OLLAMA_HOST}/api/chat", json=payload, stream=True, timeout=120
@@ -648,23 +659,50 @@ SPEAKER_DEV = os.environ.get("SPEAKER_CARD", "plughw:2,0")
 # ---------- POST /asr ----------
 @app.post("/asr")
 async def asr_transcribe(audio: UploadFile = File(...)):
-    """语音→文字。上传 WAV（48000Hz mono int16），返回识别文本。"""
+    """语音→文字。支持常见音频格式（自动转为 16kHz 单声道 WAV），返回识别文本。"""
     if asr_model is None:
         raise HTTPException(status_code=503, detail="ASR 未就绪")
 
+    # 1. 保存上传的原始音频到临时文件
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp_raw:
+        content = await audio.read()
+        tmp_raw.write(content)
+        raw_path = tmp_raw.name
+
+    # 2. 检查是否为真正的 WAV 文件（RIFF 头）
+    def _is_wav(filepath: str) -> bool:
+        with open(filepath, 'rb') as f:
+            return f.read(4) == b'RIFF'
+
+    if _is_wav(raw_path):
+        audio_path = raw_path
+        need_cleanup = False
+    else:
+        # 转码为 16kHz 单声道 PCM WAV
+        wav_fd, wav_path = tempfile.mkstemp(suffix='.wav')
+        os.close(wav_fd)
+        cmd = [
+            'ffmpeg', '-i', raw_path,
+            '-acodec', 'pcm_s16le',
+            '-ar', '16000',
+            '-ac', '1',
+            '-y', wav_path
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            os.unlink(raw_path)
+            if os.path.exists(wav_path):
+                os.unlink(wav_path)
+            raise HTTPException(status_code=400, detail=f"音频转码失败: {str(e)}")
+        os.unlink(raw_path)
+        audio_path = wav_path
+        need_cleanup = True
+
+    # 3. 调用 ASR 推理
     try:
         from spacemit_asr.models.postprocess_utils import rich_transcription_postprocess
-    except ImportError:
-        raise HTTPException(status_code=500, detail="ASR 后处理模块缺失")
-
-    # 保存上传的 WAV
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    try:
-        tmp.write(await audio.read())
-        tmp.close()
-
-        # SenseVoice 推理
-        result = asr_model.generate(tmp.name)
+        result = asr_model.generate(audio_path)
         if isinstance(result, list) and result:
             raw = result[0]
             raw_text = raw[0] if isinstance(raw, list) else raw
@@ -675,9 +713,15 @@ async def asr_transcribe(audio: UploadFile = File(...)):
 
         text = rich_transcription_postprocess(raw_text)
         return JSONResponse(content={"text": text, "raw": str(raw_text)[:200]})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ASR 推理失败: {str(e)}")
     finally:
-        try: os.unlink(tmp.name)
-        except OSError: pass
+        if need_cleanup:
+            try: os.unlink(audio_path)
+            except OSError: pass
+        else:
+            try: os.unlink(raw_path)
+            except OSError: pass
 
 
 # ---------- POST /tts ----------

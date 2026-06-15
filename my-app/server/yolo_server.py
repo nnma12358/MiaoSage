@@ -1,178 +1,116 @@
-"""
-苗绣·识裳 — YOLOv8n 图像检测后端服务
-使用 FastAPI + ultralytics YOLOv8n 提供苗族服饰目标检测 API
-
-启动方式：
-  pip install -r server/requirements.txt
-  python server/yolo_server.py
-
-API 端点：
-  POST /detect  — 上传图像，返回 YOLOv8n 检测结果
-  GET  /health  — 健康检查
-"""
-
-import io
-import time
-import logging
-from contextlib import asynccontextmanager
-
+#!/usr/bin/env python3
+"""苗绣·识裳 — YOLOv8n 检测微服务 (K1/riscv64, spacemit-ort)"""
+import io, os, time, logging
 import numpy as np
 from PIL import Image
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from ultralytics import YOLO
 
-# ---------- 性能管理 ----------
-from perf import monitor, yolo_latency, yolo_guard
-
-# ---------- 日志 ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("yolo-server")
 
-# ---------- 全局模型 ----------
-model: YOLO | None = None
-MODEL_NAME = "yolov8n.pt"  # 可替换为自定义训练的苗族服饰模型路径
+YOLO_MODEL = os.environ.get("YOLO_MODEL", "/app/yolov8n.onnx")
 
+COCO_NAMES = {
+    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
+    5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
+    10: "fire hydrant", 11: "stop sign", 12: "parking meter", 13: "bench",
+    14: "bird", 15: "cat", 16: "dog", 17: "horse", 18: "sheep", 19: "cow",
+    20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe", 24: "backpack",
+    25: "umbrella", 26: "handbag", 27: "tie", 28: "suitcase", 29: "frisbee",
+    30: "skis", 31: "snowboard", 32: "sports ball", 33: "kite",
+    34: "baseball bat", 35: "baseball glove", 36: "skateboard",
+    37: "surfboard", 38: "tennis racket", 39: "bottle", 40: "wine glass",
+    41: "cup", 42: "fork", 43: "knife", 44: "spoon", 45: "bowl",
+    46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
+    50: "broccoli", 51: "carrot", 52: "hot dog", 53: "pizza", 54: "donut",
+    55: "cake", 56: "chair", 57: "couch", 58: "potted plant", 59: "bed",
+    60: "dining table", 61: "toilet", 62: "tv", 63: "laptop", 64: "mouse",
+    65: "remote", 66: "keyboard", 67: "cell phone", 68: "microwave",
+    69: "oven", 70: "toaster", 71: "sink", 72: "refrigerator", 73: "book",
+    74: "clock", 75: "vase", 76: "scissors", 77: "teddy bear",
+    78: "hair drier", 79: "toothbrush",
+}
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """应用生命周期：启动时加载模型，关闭时释放资源。"""
-    global model
-    logger.info(f"正在加载 YOLO 模型: {MODEL_NAME} ...")
-    model = YOLO(MODEL_NAME)
-    logger.info("YOLO 模型加载完成 ✓")
-    yield
-    # 清理（可选）
-    logger.info("服务关闭")
+class YOLODetector:
+    def __init__(self, model_path: str):
+        import onnxruntime as ort
+        self._session = ort.InferenceSession(model_path, providers=ort.get_available_providers())
+        _, _, h, w = self._session.get_inputs()[0].shape
+        self._input_shape = (w, h)
+        self._in_name = self._session.get_inputs()[0].name
+        logger.info(f"YOLO 模型加载: {model_path} ({self._input_shape})")
 
+    def detect(self, img: Image.Image) -> list:
+        w_in, h_in = self._input_shape
+        img_w, img_h = img.size
+        arr = np.array(img.resize((w_in, h_in), Image.BILINEAR), dtype=np.float32) / 255.0
+        arr = np.expand_dims(arr.transpose(2, 0, 1), axis=0)
+        preds = np.squeeze(self._session.run(None, {self._in_name: arr})[0])
 
-app = FastAPI(
-    title="苗绣·识裳 YOLOv8n 检测服务",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+        bbox_raw, scores = preds[:4, :], preds[4:, :]
+        class_ids = np.argmax(scores, axis=0)
+        confs = np.max(scores, axis=0)
+        mask = confs > 0.25
+        if not mask.any():
+            return []
 
-# ---------- CORS（允许前端跨域访问） ----------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],          # 生产环境请限制为前端域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+        bbox_raw, class_ids, confs = bbox_raw[:, mask], class_ids[mask], confs[mask]
+        cx, cy, w, h = bbox_raw[0], bbox_raw[1], bbox_raw[2], bbox_raw[3]
+        x1 = (cx - w / 2) * img_w / w_in
+        y1 = (cy - h / 2) * img_h / h_in
+        x2 = (cx + w / 2) * img_w / w_in
+        y2 = (cy + h / 2) * img_h / h_in
 
+        # NMS
+        areas = (x2 - x1) * (y2 - y1)
+        order = np.argsort(confs)[::-1]
+        keep = []
+        while len(order) > 0:
+            i = order[0]; keep.append(i)
+            if len(order) == 1: break
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+            inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+            order = order[1:][inter / (areas[i] + areas[order[1:]] - inter + 1e-6) < 0.45]
+
+        dets = []
+        for i in keep:
+            dets.append({
+                "class": COCO_NAMES.get(int(class_ids[i]), f"cls_{int(class_ids[i])}"),
+                "confidence": round(float(confs[i]), 4),
+                "bbox": {"x1": round(float(x1[i]), 1), "y1": round(float(y1[i]), 1),
+                         "x2": round(float(x2[i]), 1), "y2": round(float(y2[i]), 1)},
+            })
+        return sorted(dets, key=lambda d: d["confidence"], reverse=True)
+
+app = FastAPI(title="YOLO Service")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
+
+detector = None
+
+@app.on_event("startup")
+def startup():
+    global detector
+    detector = YOLODetector(YOLO_MODEL)
+    logger.info("YOLO 服务就绪")
 
 @app.get("/health")
-async def health_check():
-    """健康检查端点"""
-    return {
-        "status": "ok",
-        "model": MODEL_NAME,
-        "model_loaded": model is not None,
-    }
-
-
-@app.get("/stats")
-async def system_stats():
-    """返回服务端实时性能指标"""
-    snap = monitor.snapshot()
-    return {
-        "cpu_percent": snap["cpu_percent"],
-        "cpu_count": snap["cpu_count"],
-        "cpu_temp": snap["cpu_temp"],
-        "mem_percent": snap["mem_percent"],
-        "mem_used_mb": snap["mem_used_mb"],
-        "process_rss_mb": snap["process_rss_mb"],
-        "yolo_latency": yolo_latency.stats(),
-        "yolo_queue": yolo_guard.stats(),
-        "model": MODEL_NAME,
-        "model_loaded": model is not None,
-    }
-
+def health():
+    return {"status": "ok", "model": YOLO_MODEL}
 
 @app.post("/detect")
-async def detect_objects(image: UploadFile = File(...)):
-    """
-    图像目标检测接口
-
-    - 接受 multipart/form-data 上传的图片（jpg/png/webp 等）
-    - 使用 YOLOv8n 进行推理
-    - 返回检测到的物体类别、置信度与边界框
-    """
-    global model
-    if model is None:
-        raise HTTPException(status_code=503, detail="模型尚未加载完成，请稍后重试")
-
-    # 1. 校验文件类型
-    allowed_types = {"image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"}
-    if image.content_type and image.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的文件类型: {image.content_type}，请上传 jpg/png/webp 图片",
-        )
-
-    yolo_guard.enter()
+async def detect(image: UploadFile = File(...)):
     t0 = time.perf_counter()
-    try:
-        await yolo_guard.acquire()
-        # 2. 读取上传的图片
-        contents = await image.read()
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
-        logger.info(f"收到图片: {image.filename}, 尺寸: {img.size}")
+    contents = await image.read()
+    img = Image.open(io.BytesIO(contents)).convert("RGB")
+    dets = detector.detect(img)
+    ms = round((time.perf_counter() - t0) * 1000, 1)
+    return {"success": True, "detections": dets, "count": len(dets), "latency_ms": ms}
 
-        # 3. YOLOv8n 推理
-        results = model(img, verbose=False)  # verbose=False 减少控制台输出
-        yolo_latency.record(round((time.perf_counter() - t0) * 1000, 1))
-        result = results[0]  # 单张图片取第一个结果
-
-        # 4. 提取检测信息
-        detections = []
-        if result.boxes is not None:
-            boxes = result.boxes.xyxy.cpu().numpy()      # [N, 4] 边界框坐标
-            confidences = result.boxes.conf.cpu().numpy() # [N]   置信度
-            class_ids = result.boxes.cls.cpu().numpy()    # [N]   类别 ID
-
-            for i in range(len(boxes)):
-                class_id = int(class_ids[i])
-                class_name = model.names.get(class_id, f"class_{class_id}")
-                detections.append({
-                    "class": class_name,
-                    "confidence": round(float(confidences[i]), 4),
-                    "bbox": {
-                        "x1": round(float(boxes[i][0]), 2),
-                        "y1": round(float(boxes[i][1]), 2),
-                        "x2": round(float(boxes[i][2]), 2),
-                        "y2": round(float(boxes[i][3]), 2),
-                    },
-                })
-
-            # 按置信度降序排列
-            detections.sort(key=lambda d: d["confidence"], reverse=True)
-
-        logger.info(f"检测完成: {len(detections)} 个目标 → {[d['class'] for d in detections[:5]]}")
-
-        return JSONResponse(content={
-            "success": True,
-            "detections": detections,
-            "count": len(detections),
-            "image_size": {"width": img.width, "height": img.height},
-        })
-
-    except RuntimeError as e:
-        yolo_guard.error()
-        raise HTTPException(status_code=503, detail=str(e))
-    except Exception as e:
-        yolo_guard.error()
-        logger.error(f"推理失败: {e}")
-        raise HTTPException(status_code=500, detail=f"YOLO 推理异常: {str(e)}")
-    finally:
-        yolo_guard.release()
-        yolo_guard.exit()
-
-
-# ---------- 直接运行 ----------
 if __name__ == "__main__":
     import uvicorn
-    logger.info("启动 YOLOv8n 检测服务 (http://localhost:8000) ...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
