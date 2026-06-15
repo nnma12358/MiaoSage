@@ -1,16 +1,29 @@
 # 苗绣·识裳 — K1 板 riscv64 依赖
-
-# ONNX Runtime（通用环境）
-onnxruntime>=1.17.0
+# ⚠️ scipy/Pillow/requests/PyYAML/regex/tqdm/click/nltk/joblib/PyAudio → apt 安装
+# ⚠️ numpy → spacemit-ort 自动安装 riscv64 预编译版
 
 # ONNX Runtime（K1 板 riscv64，进迭时空官方预编译）
-# 安装命令:
-#   pip install --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple spacemit-ort
 spacemit-ort>=1.2.0
 
-# 通用
+# ---- pip 独有（apt 未提供或需特定版本）----
 fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-Pillow>=10.0.0
+uvicorn>=0.30.0
 python-multipart>=0.0.12
-requests>=2.31.0
+
+# ---- ASR 语音识别 ----
+jieba>=0.42.0
+cn2an>=0.5.0
+kaldi-native-fbank>=1.20.0
+webrtcvad>=2.0.10
+
+# ---- TTS 语音合成 ----
+playsound>=1.3.0
+g2p-en>=2.1.0
+pypinyin>=0.54.0
+
+# ---- 音频 I/O ----
+soundfile>=0.12.0
+
+# ---- TTS 文本处理（spacemit_tts 依赖）----
+# transformers 通过 apt 安装（python3-transformers），避免 pip 拉取 Rust 包 tokenizers
+
