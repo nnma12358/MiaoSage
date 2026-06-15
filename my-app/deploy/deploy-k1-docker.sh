@@ -22,7 +22,7 @@ TARGET="${1:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-BDIR="/opt/miao-xiu"
+BDIR="/home/bainbu/miao-xiu-k1"
 
 cd "$PROJECT_DIR"
 

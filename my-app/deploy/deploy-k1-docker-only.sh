@@ -6,11 +6,11 @@
 #   bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 #
 # 目录规划：
-#   /opt/miao-xiu-k1      静态部署（board_server.py）
-#   /opt/miao-xiu-k1-d    Docker 多容器（本脚本）
+#   /home/bainbu/miao-xiu-k1      静态部署（board_server.py）
+#   /home/bainbu/miao-xiu-k1-d    Docker 多容器（本脚本）
 #
 # 模型/依赖复用：
-#   yolov8n.onnx     → 从 /opt/miao-xiu-k1/ 复制
+#   yolov8n.onnx     → 从 /home/bainbu/miao-xiu-k1/ 复制
 #   NLP 模块          → 宿主机 /home/bainbu/spacemit-demo/examples/NLP
 #   Ollama            → 宿主机 127.0.0.1:11434
 # ============================================================
@@ -22,8 +22,8 @@ TARGET="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-BDIR_STATIC="/opt/miao-xiu-k1"      # 静态部署目录（已存在）
-BDIR_DOCKER="/opt/miao-xiu-k1-d"    # Docker 部署目录（新建）
+BDIR_STATIC="/home/bainbu/miao-xiu-k1"      # 静态部署目录（已存在）
+BDIR_DOCKER="/home/bainbu/miao-xiu-k1-d"    # Docker 部署目录（新建）
 
 cd "$PROJECT_DIR"
 
