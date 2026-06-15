@@ -6,7 +6,7 @@
 set -e
 TARGET="${1:?用法: bash deploy/pack-send.sh root@192.168.x.x [static|docker]}"
 MODE="${2:-docker}"
-BDIR="/opt/miao-xiu"
+BDIR="/home/bainbu/miao-xiu-k1"
 
 cd "$(dirname "$0")/.."
 
