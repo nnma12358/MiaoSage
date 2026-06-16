@@ -18,12 +18,8 @@ RUN pip install --break-system-packages --no-cache-dir \
     fastapi uvicorn soundfile python-multipart playsound g2p-en pypinyin && \
     rm -rf /root/.cache/pip/*
 
-# transformers（TTS 英文文本处理）从 spacemit 安装
-# tokenizers wheel 由用户预编译，构建前放到 my-app/ 目录
-RUN mkdir -p /tmp/wheels
-COPY tokenizer*.whl /tmp/wheels/
-RUN pip install --break-system-packages --no-cache-dir /tmp/wheels/tokenizer*.whl && \
-    pip install --break-system-packages --no-cache-dir \
+# transformers（TTS 英文文本处理）从 spacemit 安装（含 tokenizers）
+RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     transformers && \
     rm -rf /root/.cache/pip/*
