@@ -742,9 +742,12 @@ async def tts_synthesize(request: Request):
         text = text[:500]
 
     audio_file = tts_model.ort_predict(text)
+    async def _cleanup():
+        if os.path.exists(audio_file):
+            os.unlink(audio_file)
     return FileResponse(audio_file, media_type="audio/wav",
                         filename="speech.wav",
-                        background=lambda: os.unlink(audio_file) if os.path.exists(audio_file) else None)
+                        background=_cleanup)
 
 
 # ---------- POST /voice/chat ----------
