@@ -18,9 +18,12 @@ Thumbs.db
 !.env.example
 !.env.test
 
-# Build artifacts
-*.tar.gz
-*.zip
+# Model files (user uploads their own)
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
 
 # Vite
 vite.config.js.timestamp-*
