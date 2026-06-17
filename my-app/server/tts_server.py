@@ -21,7 +21,10 @@ class TTSEngine:
 
     def synthesize(self, text: str) -> str:
         """返回生成的音频文件路径"""
-        return self._model.ort_predict(text[:500])
+        logger.info(f"TTS 合成开始: {text[:30]}...")
+        result = self._model.ort_predict(text[:500])
+        logger.info(f"TTS 合成完成: {result}")
+        return result
 
 app = FastAPI(title="TTS Service")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
@@ -33,6 +36,9 @@ engine = None
 def startup():
     global engine
     engine = TTSEngine()
+    # 预热：首次推理加载 jieba/transformers 很慢（~45s），提前触发
+    logger.info("预热 TTS 语言模块（首次较慢）...")
+    engine.synthesize("预热")
     logger.info("TTS 服务就绪")
 
 @app.get("/health")
