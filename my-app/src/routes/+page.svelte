@@ -1,5 +1,5 @@
 ﻿<script>
-  import { fade, slide } from 'svelte/transition';
+  import { fade, slide, fly } from 'svelte/transition';
   import { onMount, onDestroy } from 'svelte';
 
   // --- 状态变量 ---
@@ -1228,7 +1228,7 @@ let micStream = null;                // 录音媒体流
           </div>
         {:else}
           {#each messages as msg (msg.id)}
-            <div class="chat-bubble {msg.role}">
+            <div class="chat-bubble {msg.role}" in:fly={{ y: 16, duration: 350 }}>
               <div class="bubble-avatar">
                 {#if msg.role === 'assistant'}
                   <div class="avatar ai">
@@ -1253,7 +1253,7 @@ let micStream = null;                // 录音媒体流
           {/each}
 
           {#if isStreaming}
-            <div class="chat-bubble assistant streaming-bubble">
+            <div class="chat-bubble assistant streaming-bubble" in:fly={{ y: 16, duration: 350 }}>
               <div class="bubble-avatar">
                 <div class="avatar ai">
                   <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 16 C4 8 10 2 12 2 C14 2 20 8 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -1272,7 +1272,7 @@ let micStream = null;                // 录音媒体流
           {/if}
 
           {#if isLoading && !isStreaming}
-            <div class="chat-bubble assistant loading-bubble">
+            <div class="chat-bubble assistant loading-bubble" in:fly={{ y: 16, duration: 350 }}>
               <div class="bubble-avatar">
                 <div class="avatar ai">
                   <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 16 C4 8 10 2 12 2 C14 2 20 8 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -2327,31 +2327,14 @@ let micStream = null;                // 录音媒体流
   .chat-bubble {
     display: flex;
     gap: 8px;
-    animation: bubbleIn 0.35s ease-out both;
   }
 
   .chat-bubble.assistant {
     flex-direction: row;
-    animation-delay: 0.1s;
   }
 
   .chat-bubble.user {
     flex-direction: row-reverse;
-    animation-delay: 0s;
-  }
-
-  .loading-bubble {
-    animation: loadingIn 0.3s ease-out both;
-  }
-
-  @keyframes bubbleIn {
-    0%   { opacity: 0; transform: translateY(16px) scale(0.96); }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  @keyframes loadingIn {
-    0%   { opacity: 0; transform: translateY(8px); }
-    100% { opacity: 1; transform: translateY(0); }
   }
 
   .bubble-avatar .avatar {
@@ -2461,25 +2444,16 @@ let micStream = null;                // 录音媒体流
   }
   .dot {
     font-size: 0.5rem;
-    animation: dotBounce 1.4s infinite ease-in-out;
+    animation: :global(dotBounce) 1.4s infinite ease-in-out;
   }
   .dot:nth-child(2) { animation-delay: 0.2s; }
   .dot:nth-child(3) { animation-delay: 0.4s; }
 
-  @keyframes dotBounce {
-    0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
-    40% { transform: translateY(-5px); opacity: 1; }
-  }
-
   /* 打字机光标闪烁 */
   .cursor-blink {
-    animation: cursorFlash 0.8s step-end infinite;
+    animation: :global(cursorFlash) 0.8s step-end infinite;
     color: #5ecfd1;
     font-weight: 300;
-  }
-  @keyframes cursorFlash {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
   }
 
   /* -- 输入框 -- */
@@ -2881,6 +2855,18 @@ let micStream = null;                // 录音媒体流
     }
     .status-group {
       display: none;
+    }
+  }
+
+  /* ========== 全局动画关键帧（绕过 Svelte 作用域哈希，确保构建后动画不丢失） ========== */
+  :global {
+    @keyframes dotBounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+      40% { transform: translateY(-5px); opacity: 1; }
+    }
+    @keyframes cursorFlash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
     }
   }
 </style>
