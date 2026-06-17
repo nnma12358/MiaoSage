@@ -3,34 +3,31 @@
 # ============================================================
 FROM ubuntu:24.04
 
-# 优先阿里云镜像（K1 直连 ports.ubuntu.com 超时）
+# 仅系统工具用 apt
 RUN sed -i "s@http://ports.ubuntu.com/@http://mirrors.aliyun.com/@g" /etc/apt/sources.list.d/ubuntu.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev build-essential \
     libsndfile1 wget curl \
-    python3-scipy python3-numpy python3-nltk \
-    python3-yaml python3-regex python3-tqdm python3-click python3-joblib \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# fastapi + TTS 依赖（全部 spacemit 源，避免 Rust 编译）
-RUN pip install --break-system-packages --no-cache-dir \
-    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    fastapi uvicorn soundfile python-multipart playsound g2p-en pypinyin && \
-    rm -rf /root/.cache/pip/*
-
-# spacemit-ort（TTS 模型依赖 onnxruntime）
+# 1. spacemit-ort 先装（含 onnxruntime + numpy 2.x）
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     spacemit-ort && \
-    rm -rf /usr/local/lib/python3.12/dist-packages/numpy* && \
-    apt-get update && apt-get install -y --no-install-recommends --reinstall python3-numpy && \
-    rm -rf /var/lib/apt/lists/* /root/.cache/pip/*
+    rm -rf /root/.cache/pip/*
 
-# transformers（TTS 英文文本处理）从 spacemit 安装（含 tokenizers）
-# --ignore-installed: pip 覆盖 apt 安装的 tqdm 等包（避免 "Cannot uninstall" 错误）
-RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
+# 2. 其余 Python 依赖全部从 spacemit 源装
+RUN pip install --break-system-packages --no-cache-dir \
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    fastapi uvicorn soundfile python-multipart \
+    playsound g2p-en pypinyin \
+    scipy pyyaml nltk regex click tqdm joblib && \
+    rm -rf /root/.cache/pip/*
+
+# 3. transformers（TTS 英文处理，含 tokenizers）
+RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     transformers && \
     rm -rf /root/.cache/pip/*
