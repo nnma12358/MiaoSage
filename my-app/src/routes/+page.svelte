@@ -26,6 +26,7 @@ let isRecording = $state(false);     // 是否正在录音
 let mediaRecorder = null;            // MediaRecorder 实例
 let audioChunks = [];                // 录音数据块
 let audioElement;                    // TTS 播放 <audio> 绑定
+let audioUnlocked = false;           // 浏览器音频策略解锁标记
 let ttsEnabled = $state(true);       // TTS 语音播报开关
 let micStream = null;                // 录音媒体流
 
@@ -842,7 +843,13 @@ let micStream = null;                // 录音媒体流
         // 释放旧 URL（避免内存泄漏）
         const oldSrc = audioElement.src;
         audioElement.src = url;
-        audioElement.play().catch(e => console.warn('TTS 播放被阻止:', e.message));
+        // 首次播放前尝试解锁浏览器音频策略
+        if (!audioUnlocked) {
+          try { await audioElement.play(); audioUnlocked = true; } catch { /* 等用户交互 */ }
+        }
+        if (audioUnlocked) {
+          audioElement.play().catch(e => console.warn('TTS 播放被阻止:', e.message));
+        }
         // 延迟清理旧 blob URL
         if (oldSrc && oldSrc.startsWith('blob:')) {
           setTimeout(() => URL.revokeObjectURL(oldSrc), 3000);

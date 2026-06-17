@@ -22,7 +22,7 @@ RUN pip install --break-system-packages --no-cache-dir \
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     fastapi uvicorn soundfile python-multipart \
-    playsound g2p-en pypinyin \
+    playsound g2p-en pypinyin cn2an jieba \
     scipy pyyaml nltk regex click tqdm joblib && \
     rm -rf /root/.cache/pip/*
 

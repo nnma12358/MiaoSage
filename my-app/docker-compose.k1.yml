@@ -119,6 +119,7 @@ services:
     container_name: miao-gateway
     restart: unless-stopped
     network_mode: host
+    pid: host
     depends_on:
       - yolo
       - asr
