@@ -20,6 +20,14 @@ RUN pip install --break-system-packages --no-cache-dir \
     fastapi uvicorn soundfile python-multipart playsound g2p-en pypinyin && \
     rm -rf /root/.cache/pip/*
 
+# spacemit-ort（TTS 模型依赖 onnxruntime）
+RUN pip install --break-system-packages --no-cache-dir \
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    spacemit-ort && \
+    rm -rf /usr/local/lib/python3.12/dist-packages/numpy* && \
+    apt-get update && apt-get install -y --no-install-recommends --reinstall python3-numpy && \
+    rm -rf /var/lib/apt/lists/* /root/.cache/pip/*
+
 # transformers（TTS 英文文本处理）从 spacemit 安装（含 tokenizers）
 # --ignore-installed: pip 覆盖 apt 安装的 tqdm 等包（避免 "Cannot uninstall" 错误）
 RUN pip install --break-system-packages --no-cache-dir --ignore-installed \
