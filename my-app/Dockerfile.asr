@@ -3,7 +3,9 @@
 # ============================================================
 FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 优先阿里云镜像（K1 直连 ports.ubuntu.com 超时）
+RUN sed -i "s@http://ports.ubuntu.com/@http://mirrors.aliyun.com/@g" /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev build-essential \
     libsndfile1 ffmpeg curl wget \
     python3-scipy python3-numpy python3-nltk \
