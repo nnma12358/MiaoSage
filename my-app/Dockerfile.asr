@@ -3,21 +3,27 @@
 # ============================================================
 FROM ubuntu:24.04
 
-# 优先阿里云镜像（K1 直连 ports.ubuntu.com 超时）
+# 仅系统工具用 apt
 RUN sed -i "s@http://ports.ubuntu.com/@http://mirrors.aliyun.com/@g" /etc/apt/sources.list.d/ubuntu.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-dev build-essential \
     libsndfile1 ffmpeg curl wget \
-    python3-scipy python3-numpy python3-nltk python3-yaml \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# SpacemiT ASR 依赖（NLP 模块挂载在运行时）
-# 全部从 spacemit 源装，避免 pydantic-core/Rust 编译
+# 1. spacemit-ort 先装（含 onnxruntime + numpy 2.x）
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    fastapi uvicorn soundfile python-multipart jieba cn2an kaldi-native-fbank webrtcvad && \
+    spacemit-ort && \
+    rm -rf /root/.cache/pip/*
+
+# 2. 其余 Python 依赖全部从 spacemit 源装
+RUN pip install --break-system-packages --no-cache-dir \
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    fastapi uvicorn soundfile python-multipart \
+    jieba cn2an kaldi-native-fbank webrtcvad \
+    scipy pyyaml nltk && \
     rm -rf /root/.cache/pip/*
 
 COPY server/asr_server.py /app/

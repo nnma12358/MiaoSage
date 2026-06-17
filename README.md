@@ -22,6 +22,7 @@
 | 👂 **语音识别** (ASR) | SenseVoice | 中文语音转文字 |
 | 🗣️ **语音合成** (TTS) | MeloTTS | 文字转自然语音 |
 | 🧠 **智能对话** (LLM) | Qwen2.5-Instruct | 苗族文化专家问答 |
+| 🔧 **LLM 微调** | Qwen2.5-0.5B LoRA | Unsloth 微调 + GGUF 量化 |
 
 ## 项目结构
 
@@ -46,8 +47,16 @@ miao-sage/
 │   ├── Dockerfile.{yolo,asr,tts,k1}  # 四容器镜像
 │   ├── docker-compose.k1.yml         # 多容器编排
 │   └── README.md                     # 应用详细文档
-├── translate_miao.py            # 苗语翻译工具
-└── verify_translations.py       # 翻译校验工具
+├── CV/                           # 计算机视觉模型训练
+├── LLM/                          # 大语言模型微调
+│   └── train-qwen2.5 0.5b/       # Qwen2.5-0.5B 苗族文化 LoRA 微调
+│       ├── miao_qwen_lora_0.5b/  # LoRA 适配器权重
+│       ├── miao_qwen_merged_0.5b_fp16/  # 合并后 FP16 模型
+│       ├── models/               # GGUF 量化模型 (f16/q4km)
+│       └── train_miao_qwen0.5b.py # 训练脚本 (Unsloth)
+├── chat_terminal/                # 终端聊天测试
+├── translate_miao.py             # 苗语翻译工具
+└── verify_translations.py        # 翻译校验工具
 ```
 
 ## 部署方式
