@@ -63,7 +63,7 @@ scp Dockerfile.yolo Dockerfile.asr Dockerfile.tts Dockerfile.k1 \
     docker-compose.k1.yml "$TARGET:$BDIR_DOCKER/"
 
 scp server/yolo_server.py server/asr_server.py \
-    server/tts_server.py server/gateway_server.py "$TARGET:$BDIR_DOCKER/server/"
+    server/tts_server.py server/gateway_server.py server/perf.py "$TARGET:$BDIR_DOCKER/server/"
 
 # tokenizer wheel（TTS 容器需要）
 if ls tokenizer*.whl 1>/dev/null 2>&1; then

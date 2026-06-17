@@ -44,36 +44,12 @@ SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
 请用亲切专业的口吻，适当引用苗族传说、历史、
 习俗回答用户问题。字数控制在200-500字。"""
 
-# ---- 简易性能统计 ----
-class PerfStats:
-    def __init__(self):
-        self._mem = {}
-    def memory_used_mb(self):
-        try:
-            with open("/proc/self/status") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        return int(line.split()[1]) // 1024
-        except: pass
-        return 0
-    def memory_total_mb(self):
-        try:
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        return int(line.split()[1]) // 1024
-        except: pass
-        return 0
-    def snapshot(self):
-        return {
-            "cpu_percent": 0, "cpu_count": os.cpu_count() or 4,
-            "cpu_temp": None, "mem_percent": 0,
-            "mem_used_mb": self.memory_used_mb(),
-            "mem_total_mb": self.memory_total_mb(),
-            "process_rss_mb": self.memory_used_mb(),
-        }
+# ---- 性能监控（复用 perf.py 模块）----
+import time
+from perf import monitor, LatencyTracker
 
-perf = PerfStats()
+# 网关代理延迟追踪（yolo/asr/tts 代理调用耗时）
+proxy_latency = LatencyTracker(window_size=100)
 
 # ---- 服务代理 ----
 def _proxy_post(url: str, files: dict = None, json_data: dict = None, stream: bool = False, timeout: int = 120):
@@ -131,23 +107,29 @@ async def health():
         "platform": _ARCH,
         "services": svc,
         "ollama": "✓" if ollama_ok else "✗",
-        "memory_mb": perf.memory_used_mb(),
+        "memory_mb": monitor.memory_used_mb(),
     }
 
 # ---- /stats ----
 @app.get("/stats")
 async def stats():
-    snap = perf.snapshot()
-    return {**snap, "ollama_model": OLLAMA_MODEL}
+    snap = monitor.snapshot()
+    return {
+        **snap,
+        "ollama_model": OLLAMA_MODEL,
+        "proxy_latency": proxy_latency.stats(),
+    }
 
 # ---- /detect → yolo:8000 ----
 @app.post("/detect")
 async def detect(image: UploadFile = File(...)):
     contents = await image.read()
+    t0 = time.perf_counter()
     try:
         r = http_requests.post(f"{YOLO_URL}/detect",
             files={"image": (image.filename or "img.jpg", contents, image.content_type or "image/jpeg")},
             timeout=60)
+        proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
         if r.status_code != 200:
             raise HTTPException(502, f"YOLO 返回 {r.status_code}")
         return r.json()
@@ -158,10 +140,12 @@ async def detect(image: UploadFile = File(...)):
 @app.post("/asr")
 async def asr_transcribe(audio: UploadFile = File(...)):
     contents = await audio.read()
+    t0 = time.perf_counter()
     try:
         r = http_requests.post(f"{ASR_URL}/asr",
             files={"audio": (audio.filename or "audio.wav", contents, audio.content_type or "audio/wav")},
             timeout=120)
+        proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
         if r.status_code != 200:
             raise HTTPException(502, f"ASR 返回 {r.status_code}")
         return r.json()
@@ -175,8 +159,10 @@ async def tts_synthesize(request: Request):
         body = await request.json()
     except Exception:
         raise HTTPException(400, "无效 JSON")
+    t0 = time.perf_counter()
     try:
         r = http_requests.post(f"{TTS_URL}/tts", json=body, timeout=120)
+        proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
         if r.status_code != 200:
             raise HTTPException(502, f"TTS 返回 {r.status_code}")
         return Response(content=r.content, media_type="audio/wav")

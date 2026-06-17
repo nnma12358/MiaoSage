@@ -22,8 +22,8 @@ RUN pip install --break-system-packages --no-cache-dir \
 # ---- 前端 SPA ----
 COPY build/ /app/build/
 
-# ---- 网关服务 ----
-COPY server/gateway_server.py /app/
+# ---- 网关服务 + 性能监控 ----
+COPY server/gateway_server.py server/perf.py /app/
 
 # ---- SSL 证书 ----
 RUN mkdir -p /app/certs && \
