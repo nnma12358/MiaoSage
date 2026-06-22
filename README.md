@@ -28,35 +28,77 @@
 
 ```
 miao-sage/
-├── README.md                    # 本文件
-├── my-app/                      # 主应用
-│   ├── server/                  # Python 后端
-│   │   ├── board_server.py      # 静态部署（单进程一体化）
-│   │   ├── gateway_server.py    # Docker 部署（API 网关）
-│   │   ├── yolo_server.py       # YOLO 检测微服务
-│   │   ├── asr_server.py        # ASR 语音识别微服务
-│   │   ├── tts_server.py        # TTS 语音合成微服务
-│   │   ├── perf.py              # 性能监控模块
-│   │   └── requirements.txt
-│   ├── src/                     # SvelteKit 前端源码
-│   ├── build/                   # 前端构建产物
-│   ├── deploy/                  # 部署脚本
-│   │   ├── deploy-k1-docker-only.sh
-│   │   ├── deploy-k1-docker.sh
-│   │   └── pack-send.sh
-│   ├── Dockerfile.{yolo,asr,tts,k1}  # 四容器镜像
+├── .gitattributes
+├── README.md                         # 本文件
+├── translate_miao.py                 # 苗语翻译工具
+├── verify_translations.py            # 翻译校验工具
+├── my-app/                           # 主应用
+│   ├── .dockerignore
+│   ├── .gitattributes
+│   ├── .gitignore
+│   ├── .npmrc
+│   ├── README.md                     # 应用详细文档
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── svelte.config.js
+│   ├── tsconfig.json
+│   ├── vite.config.ts
 │   ├── docker-compose.k1.yml         # 多容器编排
-│   └── README.md                     # 应用详细文档
-├── CV/                           # 计算机视觉模型训练
-├── LLM/                          # 大语言模型微调
-│   └── train-qwen2.5 0.5b/       # Qwen2.5-0.5B 苗族文化 LoRA 微调
-│       ├── miao_qwen_lora_0.5b/  # LoRA 适配器权重
-│       ├── miao_qwen_merged_0.5b_fp16/  # 合并后 FP16 模型
-│       ├── models/               # GGUF 量化模型 (f16/q4km)
-│       └── train_miao_qwen0.5b.py # 训练脚本 (Unsloth)
-├── chat_terminal/                # 终端聊天测试
-├── translate_miao.py             # 苗语翻译工具
-└── verify_translations.py        # 翻译校验工具
+│   ├── Dockerfile.yolo               # YOLO 检测容器
+│   ├── Dockerfile.asr                # ASR 语音识别容器
+│   ├── Dockerfile.tts                # TTS 语音合成容器
+│   ├── Dockerfile.k1                 # K1 静态部署容器
+│   ├── .vscode/
+│   │   └── extensions.json
+│   ├── server/                       # Python 后端
+│   │   ├── board_server.py           # 静态部署（单进程一体化）
+│   │   ├── gateway_server.py         # Docker 部署（API 网关）
+│   │   ├── yolo_server.py            # YOLO 检测微服务
+│   │   ├── asr_server.py             # ASR 语音识别微服务
+│   │   ├── tts_server.py             # TTS 语音合成微服务
+│   │   ├── perf.py                   # 性能监控模块
+│   │   └── requirements.txt
+│   ├── src/                          # SvelteKit 前端源码
+│   │   ├── app.d.ts
+│   │   ├── app.html
+│   │   ├── lib/
+│   │   │   ├── index.ts
+│   │   │   └── assets/
+│   │   │       └── favicon.svg
+│   │   └── routes/
+│   │       ├── +layout.js
+│   │       ├── +layout.svelte
+│   │       └── +page.svelte
+│   ├── static/
+│   │   └── robots.txt
+│   └── deploy/                       # 部署脚本
+│       ├── deploy-k1-docker-only.sh
+│       ├── deploy-k1-docker.sh
+│       └── pack-send.sh
+├── CV/                               # 计算机视觉模型
+│   ├── best.pt
+│   ├── best_fp16.onnx
+│   ├── clothes.pt
+│   └── clothesfp16.onnx
+└── LLM/                              # 大语言模型微调
+    └── train-qwen2.5 0.5b/           # Qwen2.5-0.5B 苗族文化 LoRA 微调
+        ├── train_miao_qwen0.5b.py    # 训练脚本 (Unsloth)
+        ├── merge_peft_fp16.py        # LoRA 合并脚本
+        ├── miao_qwen_lora_0.5b/      # LoRA 适配器权重
+        │   ├── adapter_model.safetensors
+        │   ├── adapter_config.json
+        │   ├── tokenizer.json
+        │   ├── checkpoint-300/       # 训练检查点
+        │   ├── checkpoint-500/
+        │   └── checkpoint-600/
+        ├── miao_qwen_merged_0.5b_fp16/  # 合并后 FP16 模型
+        │   ├── model.safetensors
+        │   ├── config.json
+        │   └── tokenizer.json
+        ├── models/                   # GGUF 量化模型
+        │   ├── miao_qwen_0.5b_f16.gguf
+        │   └── miao_qwen_0.5b_q4km.gguf
+        └── unsloth_compiled_cache/   # Unsloth 编译缓存
 ```
 
 ## 部署方式
