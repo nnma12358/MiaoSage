@@ -24,6 +24,26 @@
 | 🧠 **智能对话** (LLM) | Qwen2.5-Instruct | 苗族文化专家问答 |
 | 🔧 **LLM 微调** | Qwen2.5-0.5B LoRA | Unsloth 微调 + GGUF 量化 |
 
+## 克隆仓库
+
+> ⚠️ 本项目使用 **Git LFS** 管理大模型文件，直接 `git clone` 只会拉取指针文件，**无法获取真实模型**。
+
+```bash
+# 1. 安装 Git LFS（如未安装）
+#    Windows/macOS: https://git-lfs.com/
+#    Linux: sudo apt install git-lfs
+
+# 2. 初始化 Git LFS（仅需执行一次）
+git lfs install
+
+# 3. 克隆仓库（LFS 文件将自动下载）
+git clone git@github.com:nnma12358/MiaoSage.git
+cd MiaoSage
+
+# 如果已克隆但缺少 LFS 文件，手动拉取
+git lfs pull
+```
+
 ## 项目结构
 
 ```
