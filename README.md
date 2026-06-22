@@ -2,7 +2,7 @@
 
 <p align="center">
   <em>苗族服饰文化智能识别与交互系统</em><br>
-  <sub>RISC-V 国产开发板 · 前后端一体化 · 双模式部署 · 四引擎 AI</sub>
+  <sub>进迭时空 SpacemiT K1 (RISC-V) · 前后端一体化 · 双模式部署 · 四引擎 AI</sub>
 </p>
 
 <p align="center">
