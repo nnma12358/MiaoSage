@@ -238,5 +238,5 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="MIT License"><br>
-  <sub>MIT License © 2025 nnma12358</sub>
+  <sub>MIT License © 2026 nnma12358</sub>
 </p>
