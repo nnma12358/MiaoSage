@@ -76,8 +76,6 @@ git lfs pull
 miao-sage/
 ├── .gitattributes
 ├── README.md                         # 本文件
-├── translate_miao.py                 # 苗语翻译工具
-├── verify_translations.py            # 翻译校验工具
 ├── my-app/                           # 主应用
 │   ├── .dockerignore
 │   ├── .gitattributes
