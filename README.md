@@ -205,7 +205,7 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 |---------|---------|
 | 🛠️ 开发板 | **SpacemiT Muse Pi Pro (K1)** |
 | 🏗️ 架构 | riscv64 |
-| 💿 系统 | Ubuntu 24.04 |
+| 💿 系统 |Bianbu LXQt V2.3.3 |
 | 🧮 内存 | 8GB（Docker 模式）/ 2GB（静态模式） |
 | 💾 存储 | 16GB+（模型文件约 3GB） |
 | 🌐 网络 | host 模式 + 宿主机 Ollama |
