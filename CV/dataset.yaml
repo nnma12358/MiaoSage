@@ -1,0 +1,12 @@
+train: /mnt/d/Desktop/yolo_dataset/images/train
+val: /mnt/d/Desktop/yolo_dataset/images/val
+nc: 8
+names:
+  0: tassel_hat
+  1: miao_ox_horn_silver_headwear
+  2: miao_silver_hairpin
+  3: miao_silver_crown
+  4: miao_silver_chest_ornament
+  5: miao_silver_lock
+  6: miao_silver_necklace
+  7: silver_headdress
