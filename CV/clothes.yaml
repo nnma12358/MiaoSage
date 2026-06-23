@@ -1,0 +1,6 @@
+train: /mnt/d/Desktop/1111/images/train
+val: /mnt/d/Desktop/1111/images/val
+nc: 2
+names:
+  0: 苗族便装
+  1: 苗族盛装
