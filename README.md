@@ -32,7 +32,7 @@
 
 | 🎯 能力 | 🧠 引擎 | ⚡ 说明 |
 |:---:|------|------|
-| 👁️ **视觉识别** | YOLOv8n (ONNX) | 实时目标检测 · 80 类物体 · <1s 推理 |
+| 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
 | 🗣️ **语音合成** | MeloTTS | 文字 → 自然语音 · 中文多音色 |
 | 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 |
@@ -120,10 +120,10 @@ miao-sage/
 │       ├── deploy-k1-docker.sh
 │       └── pack-send.sh
 ├── CV/                               # 计算机视觉模型
-│   ├── best.pt
-│   ├── best_fp16.onnx
-│   ├── clothes.pt
-│   └── clothesfp16.onnx
+│   ├── best.pt / best_fp16.onnx      # 苗族银饰检测（8 类）
+│   ├── clothes.pt / clothesfp16.onnx # 苗族服装检测（2 类）
+│   ├── dataset.yaml                  # 银饰数据集配置
+│   └── clothes.yaml                  # 服装数据集配置
 └── LLM/                              # 大语言模型微调
     └── train-qwen2.5 0.5b/           # Qwen2.5-0.5B 苗族文化 LoRA 微调
         ├── train_miao_qwen0.5b.py    # 训练脚本 (Unsloth)
@@ -191,8 +191,11 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
    ▼            ▼            ▼              ┌──────────────┐
 ┌──────┐  ┌──────────┐  ┌─────────┐        │  🧠 Ollama    │
 │👁️YOLO│  │ 👂 ASR   │  │ 🗣️ TTS │        │  :11434       │
-│:8000 │  │ :8001    │  │ :8002   │        │ Qwen2.5-Inst. │
-└──────┘  └──────────┘  └─────────┘        └──────────────┘
+│双模型 │  │ :8001    │  │ :8002   │        │ Qwen2.5-Inst. │
+│:8000 │  └──────────┘  └─────────┘        └──────────────┘
+│silver│
+│+cloth│
+└──────┘
 ```
 
 ---

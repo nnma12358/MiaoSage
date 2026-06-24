@@ -12,7 +12,7 @@
 
 | 功能 | 说明 |
 |------|------|
-| 🔍 **YOLOv8n 目标检测** | ONNX Runtime 推理，COCO 80 类物体识别 |
+| 🔍 **双模型目标检测** | ONNX Runtime 推理，银饰 8 类 + 服装 2 类 · 三模式 Pipeline |
 | 🎤 **ASR 语音识别** | SenseVoice 中文语音转文字 |
 | 🔊 **TTS 语音合成** | spacemit_tts 文字转语音 |
 | 💬 **LLM 智能对话** | Ollama (qwen2.5-instruct) 苗族文化知识问答 |
@@ -22,7 +22,8 @@
 
 ```
 浏览器 HTTPS :443 → Gateway (SPA + API 路由)
-                      ├── /detect  → YOLO  :8000
+                      ├── /detect  → YOLO 双模型  :8000
+                      │     ?mode=silver|clothes|pipeline
                       ├── /asr     → ASR   :8001
                       ├── /tts     → TTS   :8002
                       └── /chat    → Ollama :11434 (宿主机)
@@ -66,7 +67,8 @@ bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 
 # 或 K1 手动：
 cd /home/bainbu/miao-xiu-k1-d
-cp /home/bainbu/miao-xiu-k1/yolov8n.onnx .   # 复用模型
+cp /home/bainbu/miao-xiu-k1/best_fp16.onnx .       # 银饰模型
+cp /home/bainbu/miao-xiu-k1/clothesfp16.onnx .   # 服装模型
 docker compose -f docker-compose.k1.yml build
 docker compose -f docker-compose.k1.yml up -d
 ```
@@ -113,7 +115,7 @@ docker compose -f docker-compose.k1.yml up -d asr tts gateway
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | 前端 SPA |
-| `/detect` | POST | 上传图片 → YOLOv8n 检测结果 |
+| `/detect` | POST | 上传图片 → 苗族服饰/银饰检测 (支持 ?mode=silver\|clothes\|pipeline) |
 | `/asr` | POST | 上传音频 → 文字 |
 | `/tts` | POST | `{"text":"..."}` → WAV 音频 |
 | `/chat` | POST | LLM 对话 |
@@ -127,7 +129,7 @@ docker compose -f docker-compose.k1.yml up -d asr tts gateway
 |------|------|
 | 前端 | SvelteKit |
 | 后端 | FastAPI + Uvicorn |
-| 目标检测 | YOLOv8n ONNX (spacemit-ort) |
+| 目标检测 | YOLOv8n 双模型 ONNX — 银饰 8 类 + 服装 2 类 (spacemit-ort) |
 | 语音识别 | SenseVoice (spacemit_asr) |
 | 语音合成 | MeloTTS (spacemit_tts) |
 | 大语言模型 | Ollama + Qwen2.5-Instruct |
