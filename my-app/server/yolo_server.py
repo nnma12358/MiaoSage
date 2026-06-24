@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""苗绣·识裳 — YOLOv8n 检测微服务 (K1/riscv64, spacemit-ort)"""
+"""苗绣·识裳 — 苗族服饰/银饰检测微服务 (K1/riscv64, spacemit-ort)"""
 import io, os, time, logging
 import numpy as np
 from PIL import Image
@@ -9,28 +9,28 @@ from fastapi.middleware.cors import CORSMiddleware
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("yolo-server")
 
-YOLO_MODEL = os.environ.get("YOLO_MODEL", "/app/yolov8n.onnx")
+# 默认使用训练的苗族银饰检测模型（8类）
+# 也可通过环境变量切换: export YOLO_MODEL="/app/clothesfp16.onnx"（服装2类）
+YOLO_MODEL = os.environ.get("YOLO_MODEL", "/app/best_fp16.onnx")
 
-COCO_NAMES = {
-    0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
-    5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
-    10: "fire hydrant", 11: "stop sign", 12: "parking meter", 13: "bench",
-    14: "bird", 15: "cat", 16: "dog", 17: "horse", 18: "sheep", 19: "cow",
-    20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe", 24: "backpack",
-    25: "umbrella", 26: "handbag", 27: "tie", 28: "suitcase", 29: "frisbee",
-    30: "skis", 31: "snowboard", 32: "sports ball", 33: "kite",
-    34: "baseball bat", 35: "baseball glove", 36: "skateboard",
-    37: "surfboard", 38: "tennis racket", 39: "bottle", 40: "wine glass",
-    41: "cup", 42: "fork", 43: "knife", 44: "spoon", 45: "bowl",
-    46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
-    50: "broccoli", 51: "carrot", 52: "hot dog", 53: "pizza", 54: "donut",
-    55: "cake", 56: "chair", 57: "couch", 58: "potted plant", 59: "bed",
-    60: "dining table", 61: "toilet", 62: "tv", 63: "laptop", 64: "mouse",
-    65: "remote", 66: "keyboard", 67: "cell phone", 68: "microwave",
-    69: "oven", 70: "toaster", 71: "sink", 72: "refrigerator", 73: "book",
-    74: "clock", 75: "vase", 76: "scissors", 77: "teddy bear",
-    78: "hair drier", 79: "toothbrush",
+# 苗族服饰/银饰检测类别（根据数据集 CV/dataset.yaml 和 CV/clothes.yaml）
+_MIAO_SILVER_CLASSES = {  # best_fp16.onnx — 苗族银饰（8 类）
+    0: "流苏帽 (tassel_hat)",
+    1: "苗族牛角银头饰 (miao_ox_horn_silver_headwear)",
+    2: "苗族银发簪 (miao_silver_hairpin)",
+    3: "苗族银冠 (miao_silver_crown)",
+    4: "苗族银胸饰 (miao_silver_chest_ornament)",
+    5: "苗族银锁 (miao_silver_lock)",
+    6: "苗族银项链 (miao_silver_necklace)",
+    7: "银头饰 (silver_headdress)",
 }
+_MIAO_CLOTHES_CLASSES = {  # clothesfp16.onnx — 苗族服装（2 类）
+    0: "苗族便装 (Miao casual wear)",
+    1: "苗族盛装 (Miao ceremonial dress)",
+}
+
+# 根据加载的模型自动选择类别映射
+MIAO_CLASSES = _MIAO_CLOTHES_CLASSES if "clothes" in YOLO_MODEL else _MIAO_SILVER_CLASSES
 
 class YOLODetector:
     def __init__(self, model_path: str):
@@ -39,7 +39,7 @@ class YOLODetector:
         _, _, h, w = self._session.get_inputs()[0].shape
         self._input_shape = (w, h)
         self._in_name = self._session.get_inputs()[0].name
-        logger.info(f"YOLO 模型加载: {model_path} ({self._input_shape})")
+        logger.info(f"苗族服饰检测模型加载: {model_path} ({self._input_shape})")
 
     def detect(self, img: Image.Image) -> list:
         w_in, h_in = self._input_shape
@@ -79,7 +79,7 @@ class YOLODetector:
         dets = []
         for i in keep:
             dets.append({
-                "class": COCO_NAMES.get(int(class_ids[i]), f"cls_{int(class_ids[i])}"),
+                "class": MIAO_CLASSES.get(int(class_ids[i]), f"cls_{int(class_ids[i])}"),
                 "confidence": round(float(confs[i]), 4),
                 "bbox": {"x1": round(float(x1[i]), 1), "y1": round(float(y1[i]), 1),
                          "x2": round(float(x2[i]), 1), "y2": round(float(y2[i]), 1)},
