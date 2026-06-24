@@ -2,7 +2,7 @@
 """
 苗绣·识裳 — K1 板一体化服务器
 ========================================================
-单文件部署：前端 SPA + YOLOv8n 检测 + LLM 对话
+单文件部署：前端 SPA + 苗族服饰检测 + LLM 对话
 无需 Docker / Nginx，一个 Python 进程搞定
 
 启动：
@@ -11,7 +11,7 @@
 
 API：
   /             前端 SPA (build/)
-  /detect       YOLOv8n 目标检测 (spacemit-ort ONNX)
+  /detect       苗族服饰/银饰检测 (spacemit-ort ONNX)
   /chat         LLM 对话 (Ollama代理 → 知识库兜底)
   /chat/stream  LLM 流式对话 (SSE)
   /health       健康检查 + 功能清单
@@ -72,7 +72,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "build"
 # 容器内 build/ 可能在 /app/build
 if not STATIC_DIR.exists():
     STATIC_DIR = Path(__file__).resolve().parent / "build"
-YOLO_MODEL = os.environ.get("YOLO_MODEL", "yolov8n.onnx")   # 默认量化 ONNX
+# 默认使用训练的苗族银饰检测模型（8类），也可切换为服装模型 clothesfp16.onnx（2类）
+YOLO_MODEL = os.environ.get("YOLO_MODEL", "best_fp16.onnx")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-instruct")
 
@@ -94,8 +95,8 @@ def _resolve_model() -> str:
     _server_dir = os.path.dirname(__file__)                       # server/
     _project_dir = os.path.dirname(_server_dir)                   # miao-xiu-k1/
     candidates = [
-        os.path.join(_server_dir, YOLO_MODEL),                    # server/yolov8n.onnx
-        os.path.join(_project_dir, YOLO_MODEL),                   # miao-xiu-k1/yolov8n.onnx
+        os.path.join(_server_dir, YOLO_MODEL),                    # server/best_fp16.onnx
+        os.path.join(_project_dir, YOLO_MODEL),                   # miao-xiu-k1/best_fp16.onnx
         "/app/models/" + YOLO_MODEL,                               # Docker: /app/models/
         "/app/models/" + YOLO_MODEL.replace(".onnx", ".pt"),      # Docker: .pt 兜底
     ]
@@ -103,24 +104,7 @@ def _resolve_model() -> str:
         if os.path.exists(c):
             logger.info(f"找到模型: {c}")
             return c
-    # 都不存在则尝试直接下载 ONNX 模型（无需 ultralytics/PyTorch）
-    logger.info(f"模型 {YOLO_MODEL} 未找到，将尝试从 GitHub 下载...")
-    _url = f"https://github.com/ultralytics/assets/releases/download/v8.2.0/{YOLO_MODEL}"
-    _save_to = os.path.join(_server_dir, YOLO_MODEL)
-    try:
-        r = http_requests.get(_url, timeout=180, stream=True)
-        if r.status_code == 200:
-            downloaded = 0
-            with open(_save_to, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-            logger.info(f"✓ ONNX 模型已下载: {_save_to} ({downloaded/1024/1024:.1f} MB)")
-            return _save_to
-        else:
-            logger.warning(f"下载失败 HTTP {r.status_code}: {_url}")
-    except Exception as e:
-        logger.warning(f"自动下载失败: {e}")
+    logger.warning(f"模型 {YOLO_MODEL} 未找到，请确保模型文件存在于上述路径之一")
     return YOLO_MODEL  # 返回原始路径，由 YOLODetector 自行兜底
 
 # ---------- 苗族系统提示 ----------
@@ -135,35 +119,30 @@ SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
 # ============================================================
 class YOLODetector:
     """
-    YOLOv8n 检测器，自动选择后端：
+    苗族服饰/银饰检测器，自动选择后端：
       1. onnxruntime（最快，需编译/预装）
       2. onnx + numpy（纯 Python，riscv64 通用，免编译）
       3. ultralytics（兜底，需 .pt 模型 + PyTorch）
     """
 
-    COCO_NAMES = {
-        0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 4: "airplane",
-        5: "bus", 6: "train", 7: "truck", 8: "boat", 9: "traffic light",
-        10: "fire hydrant", 11: "stop sign", 12: "parking meter", 13: "bench",
-        14: "bird", 15: "cat", 16: "dog", 17: "horse", 18: "sheep", 19: "cow",
-        20: "elephant", 21: "bear", 22: "zebra", 23: "giraffe", 24: "backpack",
-        25: "umbrella", 26: "handbag", 27: "tie", 28: "suitcase", 29: "frisbee",
-        30: "skis", 31: "snowboard", 32: "sports ball", 33: "kite",
-        34: "baseball bat", 35: "baseball glove", 36: "skateboard",
-        37: "surfboard", 38: "tennis racket", 39: "bottle", 40: "wine glass",
-        41: "cup", 42: "fork", 43: "knife", 44: "spoon", 45: "bowl",
-        46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
-        50: "broccoli", 51: "carrot", 52: "hot dog", 53: "pizza", 54: "donut",
-        55: "cake", 56: "chair", 57: "couch", 58: "potted plant", 59: "bed",
-        60: "dining table", 61: "toilet", 62: "tv", 63: "laptop", 64: "mouse",
-        65: "remote", 66: "keyboard", 67: "cell phone", 68: "microwave",
-        69: "oven", 70: "toaster", 71: "sink", 72: "refrigerator", 73: "book",
-        74: "clock", 75: "vase", 76: "scissors", 77: "teddy bear",
-        78: "hair drier", 79: "toothbrush",
+    # 苗族银饰类别（best_fp16.onnx，8 类）
+    MIAO_SILVER_CLASSES = {
+        0: "流苏帽", 1: "苗族牛角银头饰", 2: "苗族银发簪",
+        3: "苗族银冠", 4: "苗族银胸饰", 5: "苗族银锁",
+        6: "苗族银项链", 7: "银头饰",
+    }
+
+    # 苗族服装类别（clothesfp16.onnx，2 类）
+    MIAO_CLOTHES_CLASSES = {
+        0: "苗族便装", 1: "苗族盛装",
     }
 
     def __init__(self, model_path: str):
-        self.names = self.COCO_NAMES
+        # 根据模型文件名自动选择类别映射
+        if "clothes" in model_path:
+            self.names = self.MIAO_CLOTHES_CLASSES
+        else:
+            self.names = self.MIAO_SILVER_CLASSES
         self.backend = "unknown"
         self._ort_session = None      # onnxruntime
         self._onnx_ref = None         # onnx.reference (numpy)
@@ -286,7 +265,7 @@ class YOLODetector:
 
     def _postprocess_onnx(self, preds, img_w, img_h, in_w, in_h,
                           conf_thresh=0.25, iou_thresh=0.45) -> list:
-        """YOLOv8n ONNX 输出 → 检测结果列表"""
+        """ONNX 输出 → 苗族服饰检测结果列表"""
         preds = np.squeeze(preds)  # (84, 8400)
 
         # 分割 bbox 和 class scores
