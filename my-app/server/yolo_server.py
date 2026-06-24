@@ -162,8 +162,8 @@ class MiaoPipelineDetector:
             result["clothes"] = clothes_dets
             result["cost_ms"]["clothes"] = round((time.perf_counter() - t0) * 1000, 1)
 
-            # 判断是否触发银饰检测
-            has_trigger = any(d["cls_id"] == trigger_cls for d in clothes_dets)
+            # 只要检测到人物（便装或盛装）就触发银饰检测
+            has_trigger = len(clothes_dets) > 0
             result["triggered"] = has_trigger
 
             if has_trigger or len(clothes_dets) == 0:
