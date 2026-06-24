@@ -72,8 +72,9 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "build"
 # 容器内 build/ 可能在 /app/build
 if not STATIC_DIR.exists():
     STATIC_DIR = Path(__file__).resolve().parent / "build"
-# 默认使用训练的苗族银饰检测模型（8类），也可切换为服装模型 clothesfp16.onnx（2类）
-YOLO_MODEL = os.environ.get("YOLO_MODEL", "best_fp16.onnx")
+# 双模型配置
+CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "clothesfp16.onnx")
+SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "best_fp16.onnx")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-instruct")
 
@@ -90,22 +91,22 @@ if IS_K1:
     logger.info(f"K1 平台检测: {_ARCH} | ONNX 线程数: {os.environ['OMP_NUM_THREADS']}")
 
 # YOLO 模型路径自动发现
-def _resolve_model() -> str:
+def _resolve_model(filename: str) -> str:
     """按优先级查找模型文件：ONNX > PT"""
     _server_dir = os.path.dirname(__file__)                       # server/
     _project_dir = os.path.dirname(_server_dir)                   # miao-xiu-k1/
     candidates = [
-        os.path.join(_server_dir, YOLO_MODEL),                    # server/best_fp16.onnx
-        os.path.join(_project_dir, YOLO_MODEL),                   # miao-xiu-k1/best_fp16.onnx
-        "/app/models/" + YOLO_MODEL,                               # Docker: /app/models/
-        "/app/models/" + YOLO_MODEL.replace(".onnx", ".pt"),      # Docker: .pt 兜底
+        os.path.join(_server_dir, filename),
+        os.path.join(_project_dir, filename),
+        "/app/models/" + filename,
+        "/app/models/" + filename.replace(".onnx", ".pt"),
     ]
     for c in candidates:
         if os.path.exists(c):
             logger.info(f"找到模型: {c}")
             return c
-    logger.warning(f"模型 {YOLO_MODEL} 未找到，请确保模型文件存在于上述路径之一")
-    return YOLO_MODEL  # 返回原始路径，由 YOLODetector 自行兜底
+    logger.warning(f"模型 {filename} 未找到，请确保模型文件存在于上述路径之一")
+    return filename  # 返回原始路径，由 YOLODetector 自行兜底
 
 # ---------- 苗族系统提示 ----------
 SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
@@ -360,17 +361,85 @@ class YOLODetector:
             dets.sort(key=lambda d: d["confidence"], reverse=True)
         return dets
 
+
+# ============================================================
+# 双模型 Pipeline 包装器
+# ============================================================
+class MiaoPipelineDetector:
+    """包装两个 YOLODetector，提供统一 detect(img, mode) 接口"""
+
+    def __init__(self, silver_det: YOLODetector, clothes_det: YOLODetector):
+        self.silver = silver_det
+        self.clothes = clothes_det
+        self.backend = f"双模型 ({silver_det.backend})"
+
+    def detect(self, img: Image.Image, mode: str = "silver",
+               use_person_filter: bool = True) -> dict:
+        """
+        :param mode: 'silver' | 'clothes' | 'pipeline'
+        :param use_person_filter: pipeline 下用人物框过滤银饰误报
+        """
+        result = {"mode": mode, "clothes": [], "silver": [], "silver_filtered": [],
+                  "triggered": False, "cost_ms": {}}
+
+        if mode == "silver":
+            t0 = time.perf_counter()
+            result["silver"] = self.silver.detect(img)
+            result["silver_filtered"] = result["silver"]
+            result["cost_ms"]["silver"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        elif mode == "clothes":
+            t0 = time.perf_counter()
+            result["clothes"] = self.clothes.detect(img)
+            result["cost_ms"]["clothes"] = round((time.perf_counter() - t0) * 1000, 1)
+
+        elif mode == "pipeline":
+            t0 = time.perf_counter()
+            result["clothes"] = self.clothes.detect(img)
+            result["cost_ms"]["clothes"] = round((time.perf_counter() - t0) * 1000, 1)
+            has_trigger = any(d.get("cls_id") == 1 for d in result["clothes"])
+            result["triggered"] = has_trigger
+
+            if has_trigger or len(result["clothes"]) == 0:
+                t0 = time.perf_counter()
+                silver_raw = self.silver.detect(img)
+                result["silver"] = silver_raw
+                result["cost_ms"]["silver"] = round((time.perf_counter() - t0) * 1000, 1)
+                result["silver_filtered"] = self._filter_by_person(
+                    silver_raw, result["clothes"]) if use_person_filter and result["clothes"] else silver_raw
+
+        result["cost_ms"]["total"] = round(
+            sum(v for v in result["cost_ms"].values() if isinstance(v, (int, float))), 1)
+        return result
+
+    @staticmethod
+    def _filter_by_person(silver_dets, clothes_dets):
+        filtered = []
+        for s in silver_dets:
+            scx = (s["bbox"]["x1"] + s["bbox"]["x2"]) / 2
+            scy = (s["bbox"]["y1"] + s["bbox"]["y2"]) / 2
+            for c in clothes_dets:
+                if (c["bbox"]["x1"] <= scx <= c["bbox"]["x2"] and
+                    c["bbox"]["y1"] <= scy <= c["bbox"]["y2"]):
+                    filtered.append(s)
+                    break
+        return filtered
+
+
 # ============================================================
 # FastAPI 应用
 # ============================================================
-yolo_detector = None
+yolo_detector: MiaoPipelineDetector = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global yolo_detector, asr_model, tts_model
-    logger.info(f"加载 YOLO 模型: {YOLO_MODEL}...")
-    _model_path = _resolve_model()
-    yolo_detector = YOLODetector(_model_path)
+    logger.info("加载双 YOLO 模型...")
+    _silver_path = _resolve_model(SILVER_MODEL)
+    _clothes_path = _resolve_model(CLOTHES_MODEL)
+    silver_det = YOLODetector(_silver_path)
+    clothes_det = YOLODetector(_clothes_path)
+    yolo_detector = MiaoPipelineDetector(silver_det, clothes_det)
 
     # ---- 加载 ASR / TTS 模型 ----
     if _asr_available:
@@ -471,7 +540,8 @@ async def health():
             "voice_asr": "✓" if asr_model else "✗",
             "voice_tts": "✓" if tts_model else "✗",
         },
-        "yolo_model": YOLO_MODEL,
+        "yolo_models": {"silver": SILVER_MODEL, "clothes": CLOTHES_MODEL},
+        "modes": ["silver", "clothes", "pipeline"],
         "memory_mb": monitor.memory_used_mb(),
     }
 
@@ -497,15 +567,22 @@ async def system_stats():
         "yolo_queue": yolo_guard.stats(),
         "llm_queue": llm_guard.stats(),
         "yolo_backend": yolo_detector.backend if yolo_detector else "none",
-        "yolo_model": YOLO_MODEL,
+        "yolo_models": {"silver": SILVER_MODEL, "clothes": CLOTHES_MODEL},
         "ollama_model": OLLAMA_MODEL,
     }
 
 # ---------- /detect ----------
+from fastapi import Query
 @app.post("/detect")
-async def detect(image: UploadFile = File(...)):
+async def detect(
+    image: UploadFile = File(...),
+    mode: str = Query("silver", description="silver | clothes | pipeline"),
+    person_filter: bool = Query(True, description="pipeline 下启用人物框过滤"),
+):
     if yolo_detector is None:
         raise HTTPException(status_code=503, detail="YOLO 未就绪")
+    if mode not in ("silver", "clothes", "pipeline"):
+        raise HTTPException(status_code=400, detail=f"无效模式: {mode}")
     allowed = {"image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"}
     if image.content_type not in allowed:
         raise HTTPException(status_code=400, detail=f"不支持: {image.content_type}")
@@ -516,9 +593,10 @@ async def detect(image: UploadFile = File(...)):
         await yolo_guard.acquire()
         contents = await image.read()
         img = Image.open(io.BytesIO(contents)).convert("RGB")
-        dets = yolo_detector.detect(img)
+        result = yolo_detector.detect(img, mode=mode, use_person_filter=person_filter)
         yolo_latency.record(round((time.perf_counter() - t0) * 1000, 1))
-        return JSONResponse(content={"success": True, "detections": dets, "count": len(dets)})
+        result["success"] = True
+        return JSONResponse(content=result)
     except RuntimeError as e:
         yolo_guard.error()
         raise HTTPException(status_code=503, detail=str(e))
