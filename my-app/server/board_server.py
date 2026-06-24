@@ -397,7 +397,8 @@ class MiaoPipelineDetector:
             t0 = time.perf_counter()
             result["clothes"] = self.clothes.detect(img)
             result["cost_ms"]["clothes"] = round((time.perf_counter() - t0) * 1000, 1)
-            has_trigger = any(d.get("cls_id") == 1 for d in result["clothes"])
+            # 只要检测到人物（便装或盛装）就触发银饰检测
+            has_trigger = len(result["clothes"]) > 0
             result["triggered"] = has_trigger
 
             if has_trigger or len(result["clothes"]) == 0:
