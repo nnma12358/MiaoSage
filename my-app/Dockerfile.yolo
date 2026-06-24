@@ -1,5 +1,6 @@
 # ============================================================
-# 苗绣·识裳 — YOLOv8n 检测微服务（riscv64）
+# 苗绣·识裳 — 双模型 YOLO 检测微服务（riscv64）
+# 模型：best_fp16.onnx (银饰8类) + clothesfp16.onnx (服装2类)
 # ============================================================
 FROM ubuntu:24.04
 
@@ -25,7 +26,7 @@ RUN pip install --break-system-packages --no-cache-dir \
     fastapi uvicorn python-multipart && \
     rm -rf /root/.cache/pip/*
 
-COPY yolov8n.onnx /app/
+COPY best_fp16.onnx clothesfp16.onnx /app/
 COPY server/yolo_server.py /app/
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
