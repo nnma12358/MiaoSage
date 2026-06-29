@@ -90,6 +90,7 @@ services:
     network_mode: host
     environment:
       - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
     volumes:
       - k1-cache:/root/.cache
       - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
@@ -99,11 +100,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 1536M
+          cpus: '3.0'
+          memory: 2048M
         reservations:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '1.0'
+          memory: 512M
     logging:
       driver: json-file
       options:
