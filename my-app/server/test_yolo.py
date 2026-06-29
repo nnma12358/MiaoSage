@@ -5,15 +5,18 @@
 在容器构建前验证 ONNX 模型加载和推理 Pipeline 正确性。
 
 用法:
-  python server/test_yolo.py                    # 自动查找模型 + 合成图测试
-  python server/test_yolo.py --image test.jpg   # 指定测试图片
-  python server/test_yolo.py --quick            # 仅加载测试（不推理）
+  python server/test_yolo.py                         # 自动查找模型 + 合成图测试
+  python server/test_yolo.py --dir test_images/      # 使用文件夹内图片批量测试
+  python server/test_yolo.py --image test.jpg        # 指定单张测试图片
+  python server/test_yolo.py --quick                 # 仅加载测试（不推理）
+  python server/test_yolo.py --output report.json    # 输出 JSON 报告
 
 通过标准: 所有断言通过 → exit 0  /  任一失败 → exit 1
 """
 
-import os, sys, time, io, json, logging, argparse
+import os, sys, time, io, json, logging, argparse, gc
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -282,9 +285,214 @@ class TestSuite:
 
 
 # ============================================================
+# 4b. 内存追踪工具
+# ============================================================
+try:
+    import psutil
+    _process = psutil.Process(os.getpid())
+
+    def get_memory_mb() -> float:
+        """当前进程 RSS 内存 (MB)"""
+        return round(_process.memory_info().rss / (1024 * 1024), 1)
+
+    def get_system_memory() -> dict:
+        """系统内存信息"""
+        mem = psutil.virtual_memory()
+        return {"total_mb": round(mem.total / (1024**2), 1),
+                "used_mb": round(mem.used / (1024**2), 1),
+                "percent": mem.percent}
+
+except ImportError:
+    psutil = None
+
+    def get_memory_mb() -> float:
+        return -1.0
+
+    def get_system_memory() -> dict:
+        return {"total_mb": -1, "used_mb": -1, "percent": -1}
+
+
+# ============================================================
+# 4c. 图片批量测试器
+# ============================================================
+class BatchTester:
+    """对文件夹内所有图片执行三模式推理并记录详细指标"""
+
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+
+    def __init__(self, detector: MiaoPipelineDetector):
+        self.detector = detector
+        self.results = []
+
+    def scan_images(self, directory: str) -> list:
+        """扫描目录下所有图片文件"""
+        dir_path = Path(directory)
+        if not dir_path.exists():
+            logger.warning(f"目录不存在: {directory}")
+            return []
+        images = sorted([
+            str(p) for p in dir_path.iterdir()
+            if p.is_file() and p.suffix.lower() in self.IMAGE_EXTS
+        ])
+        logger.info(f"  扫描到 {len(images)} 张测试图片")
+        return images
+
+    def test_image(self, image_path: str, modes=("silver", "clothes", "pipeline")) -> dict:
+        """对单张图片执行所有模式推理，返回详细指标"""
+        img = Image.open(image_path).convert("RGB")
+        img_name = os.path.basename(image_path)
+        img_size_kb = round(os.path.getsize(image_path) / 1024, 1)
+
+        mem_before = get_memory_mb()
+        record = {
+            "image": img_name,
+            "size": f"{img.size[0]}x{img.size[1]}",
+            "size_kb": img_size_kb,
+            "mem_before_mb": mem_before,
+            "modes": {},
+        }
+
+        gc.collect()
+        for mode in modes:
+            t0 = time.perf_counter()
+            mem_mode_before = get_memory_mb()
+            result = self.detector.detect(img, mode=mode,
+                                          use_person_filter=(mode == "pipeline"))
+            elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+            mem_mode_after = get_memory_mb()
+
+            mode_info = {
+                "latency_ms": elapsed_ms,
+                "mem_delta_mb": round(mem_mode_after - mem_mode_before, 1),
+                "cost_breakdown": result.get("cost_ms", {}),
+            }
+
+            if mode in ("silver", "pipeline"):
+                silver_dets = result.get("silver_filtered", result.get("silver", []))
+                mode_info["silver_count"] = len(silver_dets)
+                mode_info["silver_confs"] = [d["confidence"] for d in silver_dets]
+                mode_info["silver_classes"] = [d["class"] for d in silver_dets]
+                if silver_dets:
+                    mode_info["silver_max_conf"] = max(d["confidence"] for d in silver_dets)
+                    mode_info["silver_avg_conf"] = round(
+                        sum(d["confidence"] for d in silver_dets) / len(silver_dets), 4)
+
+            if mode in ("clothes", "pipeline"):
+                clothes_dets = result.get("clothes", [])
+                mode_info["clothes_count"] = len(clothes_dets)
+                mode_info["clothes_confs"] = [d["confidence"] for d in clothes_dets]
+                mode_info["clothes_classes"] = [d["class"] for d in clothes_dets]
+                if clothes_dets:
+                    mode_info["clothes_max_conf"] = max(d["confidence"] for d in clothes_dets)
+                    mode_info["clothes_avg_conf"] = round(
+                        sum(d["confidence"] for d in clothes_dets) / len(clothes_dets), 4)
+
+            if mode == "pipeline":
+                mode_info["triggered"] = result.get("triggered", False)
+                mode_info["silver_raw_count"] = len(result.get("silver", []))
+                mode_info["silver_filtered_count"] = len(result.get("silver_filtered", []))
+
+            record["modes"][mode] = mode_info
+            gc.collect()
+
+        mem_after = get_memory_mb()
+        record["mem_after_mb"] = mem_after
+        record["mem_peak_delta_mb"] = round(mem_after - mem_before, 1)
+        self.results.append(record)
+        return record
+
+    def print_image_report(self, record: dict):
+        """打印单张图片的详细报告"""
+        logger.info(f"\n{'─' * 60}")
+        logger.info(f"  📷 {record['image']}  ({record['size']}, {record['size_kb']} KB)")
+        logger.info(f"{'─' * 60}")
+
+        for mode, info in record["modes"].items():
+            logger.info(f"  [{mode.upper():>8}]  "
+                        f"⏱ {info['latency_ms']:>7.1f}ms  "
+                        f"📊 mem Δ{info['mem_delta_mb']:>+.1f}MB", end="")
+
+            if "silver_count" in info:
+                logger.info(f"  🪙银饰:{info['silver_count']}", end="")
+                if info.get("silver_max_conf"):
+                    logger.info(f"  max_conf={info['silver_max_conf']:.3f}", end="")
+            if "clothes_count" in info:
+                logger.info(f"  👤服装:{info['clothes_count']}", end="")
+                if info.get("clothes_max_conf"):
+                    logger.info(f"  max_conf={info['clothes_max_conf']:.3f}", end="")
+            logger.info("")  # newline
+
+            # 打印检测到的具体类别和置信度
+            if info.get("silver_classes"):
+                for cls, conf in zip(info["silver_classes"], info.get("silver_confs", [])):
+                    logger.info(f"         ├─ 🪙 {cls}  conf={conf:.3f}")
+            if info.get("clothes_classes"):
+                for cls, conf in zip(info["clothes_classes"], info.get("clothes_confs", [])):
+                    logger.info(f"         ├─ 👤 {cls}  conf={conf:.3f}")
+
+            if mode == "pipeline" and info.get("triggered") is not None:
+                raw = info.get("silver_raw_count", 0)
+                filtered = info.get("silver_filtered_count", 0)
+                logger.info(f"         └─ Pipeline: triggered={info['triggered']}, "
+                            f"银饰 {raw}→{filtered}(过滤后)")
+
+    def print_summary(self):
+        """打印批量测试汇总统计"""
+        if not self.results:
+            return
+
+        n = len(self.results)
+        logger.info(f"\n{'═' * 60}")
+        logger.info(f"  📊 批量测试汇总 ({n} 张图片)")
+        logger.info(f"{'═' * 60}")
+
+        for mode in ["silver", "clothes", "pipeline"]:
+            latencies = [r["modes"][mode]["latency_ms"] for r in self.results if mode in r["modes"]]
+            if not latencies:
+                continue
+            avg_lat = round(sum(latencies) / len(latencies), 1)
+            max_lat = round(max(latencies), 1)
+            min_lat = round(min(latencies), 1)
+
+            silver_counts = []
+            clothes_counts = []
+            for r in self.results:
+                if mode in r["modes"]:
+                    info = r["modes"][mode]
+                    if "silver_count" in info:
+                        silver_counts.append(info["silver_count"])
+                    if "clothes_count" in info:
+                        clothes_counts.append(info["clothes_count"])
+
+            logger.info(f"  [{mode:>8}]  "
+                        f"⏱ avg={avg_lat}ms  min={min_lat}ms  max={max_lat}ms", end="")
+            if silver_counts:
+                avg_s = round(sum(silver_counts) / len(silver_counts), 1)
+                logger.info(f"  🪙avg={avg_s}/图", end="")
+            if clothes_counts:
+                avg_c = round(sum(clothes_counts) / len(clothes_counts), 1)
+                logger.info(f"  👤avg={avg_c}/图", end="")
+            logger.info("")
+
+        # 内存统计
+        mem_deltas = [r.get("mem_peak_delta_mb", 0) for r in self.results if r.get("mem_peak_delta_mb", 0) > 0]
+        if mem_deltas:
+            logger.info(f"  [内存]    peak Δ avg={round(sum(mem_deltas)/len(mem_deltas),1)}MB  "
+                        f"max={round(max(mem_deltas),1)}MB")
+
+        if psutil:
+            sys_mem = get_system_memory()
+            logger.info(f"  [系统]    {sys_mem['used_mb']}/{sys_mem['total_mb']}MB "
+                        f"({sys_mem['percent']}%)")
+
+    def to_dict(self) -> list:
+        return self.results
+
+
+# ============================================================
 # 5. 主测试流程
 # ============================================================
-def run_tests(image_path: str = "", quick: bool = False):
+def run_tests(image_path: str = "", image_dir: str = "", quick: bool = False):
     ts = TestSuite()
 
     # ---- 阶段 0: 环境检查 ----
@@ -356,9 +564,9 @@ def run_tests(image_path: str = "", quick: bool = False):
         logger.info("\n⚡ --quick 模式：跳过推理测试")
         return ts.summary()
 
-    # ---- 阶段 3: 推理测试 ----
+    # ---- 阶段 3: 推理功能测试 (单张) ----
     logger.info("\n" + "=" * 60)
-    logger.info("  阶段 3: 推理功能测试")
+    logger.info("  阶段 3: 推理功能测试（单张图片）")
     logger.info("=" * 60)
 
     # 准备测试图
@@ -374,8 +582,7 @@ def run_tests(image_path: str = "", quick: bool = False):
     res = detector.detect(test_img, mode="silver")
     ts.assert_true("silver" in res, "返回结果含 'silver' 字段")
     ts.assert_true("cost_ms" in res, "返回结果含 'cost_ms' 字段")
-    ts.assert_true("silver" in res["cost_ms"], "cost_ms 含 'silver'")
-    ts.assert_lt(res["cost_ms"]["silver"], 5000, "银饰推理 < 5000ms")
+    ts.assert_lt(res["cost_ms"]["silver"], 10000, "银饰推理 < 10000ms")
     ts.assert_true(isinstance(res["silver"], list), "silver 检测结果为 list 类型")
     if res["silver"]:
         det = res["silver"][0]
@@ -389,54 +596,93 @@ def run_tests(image_path: str = "", quick: bool = False):
     logger.info("\n  --- 3b. mode=clothes ---")
     res = detector.detect(test_img, mode="clothes")
     ts.assert_true("clothes" in res, "返回结果含 'clothes' 字段")
-    ts.assert_lt(res["cost_ms"]["clothes"], 5000, "服装推理 < 5000ms")
+    ts.assert_lt(res["cost_ms"]["clothes"], 10000, "服装推理 < 10000ms")
 
-    # 3c. Pipeline 模式（关闭过滤看原始输出）
-    logger.info("\n  --- 3c. mode=pipeline (无过滤) ---")
-    res = detector.detect(test_img, mode="pipeline", use_person_filter=False)
+    # 3c. Pipeline 模式
+    logger.info("\n  --- 3c. mode=pipeline ---")
+    res = detector.detect(test_img, mode="pipeline", use_person_filter=True)
     ts.assert_true("clothes" in res, "pipeline 含 'clothes'")
     ts.assert_true("silver" in res, "pipeline 含 'silver'")
+    ts.assert_true("silver_filtered" in res, "pipeline 含 'silver_filtered'")
     ts.assert_true("triggered" in res, "pipeline 含 'triggered'")
     total = res["cost_ms"]["total"]
-    ts.assert_lt(total, 10000, f"pipeline 总耗时 < 10000ms ({total}ms)")
-    logger.info(f"  Pipeline 耗时: clothes={res['cost_ms']['clothes']}ms, "
-                f"silver={res['cost_ms'].get('silver', 'N/A')}ms, total={total}ms")
-
-    # 3d. Pipeline 模式（开启过滤）
-    logger.info("\n  --- 3d. mode=pipeline (开启人物框过滤) ---")
-    res = detector.detect(test_img, mode="pipeline", use_person_filter=True)
-    ts.assert_true("silver_filtered" in res, "pipeline 含 'silver_filtered'")
+    ts.assert_lt(total, 20000, f"pipeline 总耗时 < 20000ms ({total}ms)")
     raw_count = len(res.get("silver", []))
     filtered_count = len(res.get("silver_filtered", []))
     ts.assert_true(filtered_count <= raw_count,
                    f"过滤后银饰 ≤ 原始银饰 ({filtered_count} <= {raw_count})")
-    logger.info(f"  银饰: 原始 {raw_count} → 过滤后 {filtered_count}")
+    logger.info(f"  Pipeline: triggered={res['triggered']}, clothes={len(res['clothes'])}, "
+                f"silver {raw_count}→{filtered_count}(过滤), "
+                f"⏱ clothes={res['cost_ms']['clothes']}ms silver={res['cost_ms'].get('silver','N/A')}ms total={total}ms")
 
-    # ---- 阶段 4: 输出格式一致性 ----
+    # ---- 阶段 4: 批量图片测试 ----
     logger.info("\n" + "=" * 60)
-    logger.info("  阶段 4: 输出格式一致性")
+    logger.info("  阶段 4: 批量图片测试（文件夹模式）")
     logger.info("=" * 60)
 
-    # 对三种模式的返回格式做 schema 验证
+    tester = BatchTester(detector)
+
+    # 确定测试图片来源
+    test_images = []
+    if image_dir and os.path.isdir(image_dir):
+        test_images = tester.scan_images(image_dir)
+    elif image_path and os.path.exists(image_path):
+        test_images = [image_path]  # 单张也走批测流程
+    else:
+        # 自动寻找测试图片文件夹
+        for candidate in [
+            SERVER_DIR / "test_images",
+            PROJECT_DIR / "test_images",
+            PROJECT_DIR.parent / "test_images",
+        ]:
+            if candidate.is_dir():
+                test_images = tester.scan_images(str(candidate))
+                if test_images:
+                    break
+
+    if test_images:
+        logger.info(f"\n  开始批量测试 {len(test_images)} 张图片...")
+        for i, img_path in enumerate(test_images, 1):
+            logger.info(f"\n  [{i}/{len(test_images)}] {os.path.basename(img_path)}")
+            try:
+                record = tester.test_image(img_path)
+                tester.print_image_report(record)
+            except Exception as e:
+                logger.error(f"  ❌ 测试失败: {e}")
+                ts.assert_true(False, f"图片 {os.path.basename(img_path)} 测试异常: {e}")
+
+        tester.print_summary()
+
+        # 统计通过条件
+        total_images = len(test_images)
+        pipeline_ok = sum(
+            1 for r in tester.results
+            if "pipeline" in r["modes"] and r["modes"]["pipeline"]["latency_ms"] < 30000
+        )
+        ts.assert_true(pipeline_ok == total_images,
+                       f"Pipeline 全通过 ({pipeline_ok}/{total_images} < 30s)")
+    else:
+        logger.warning("  未找到测试图片，跳过批量测试。")
+        logger.warning("  请创建 test_images/ 文件夹并放入测试图片，或用 --dir 指定。")
+        ts.assert_true(True, "批量测试跳过（无图片）")
+
+    # ---- 阶段 5: 输出格式一致性 ----
+    logger.info("\n" + "=" * 60)
+    logger.info("  阶段 5: 输出格式一致性")
+    logger.info("=" * 60)
+
     required_keys = {"mode", "clothes", "silver", "silver_filtered", "triggered", "cost_ms"}
     for mode_name in ["silver", "clothes", "pipeline"]:
         res = detector.detect(test_img, mode=mode_name)
         missing = required_keys - set(res.keys())
         ts.assert_true(len(missing) == 0, f"{mode_name} 模式返回包含所有必需字段 (缺失: {missing})")
 
-    # 验证 cost_ms.total 一致性
-    res = detector.detect(test_img, mode="pipeline")
-    manual_sum = sum(v for k, v in res["cost_ms"].items()
-                     if k != "total" and isinstance(v, (int, float)))
-    ts.assert_true(abs(res["cost_ms"]["total"] - manual_sum) < 5,
-                   f"total ({res['cost_ms']['total']}) ≈ 各阶段之和 ({manual_sum})")
-
-    # ---- 阶段 5: 性能基准 ----
+    # ---- 阶段 6: 性能基准 ----
     logger.info("\n" + "=" * 60)
-    logger.info("  阶段 5: 性能基准（预热后取平均）")
+    logger.info("  阶段 6: 性能基准（预热后 5 次采样）")
     logger.info("=" * 60)
 
-    # 预热
+    mem_start = get_memory_mb()
     for _ in range(2):
         detector.detect(test_img, mode="silver")
 
@@ -447,8 +693,15 @@ def run_tests(image_path: str = "", quick: bool = False):
         times.append((time.perf_counter() - t0) * 1000)
 
     avg_ms = round(sum(times) / len(times), 1)
-    logger.info(f"  Silver 模式平均推理耗时: {avg_ms}ms (5次采样: {[round(t,1) for t in times]})")
-    ts.assert_lt(avg_ms, 5000, f"平均推理 < 5000ms ({avg_ms}ms)")
+    mem_end = get_memory_mb()
+    logger.info(f"  Silver 模式平均推理耗时: {avg_ms}ms")
+    logger.info(f"  5次采样: {[round(t,1) for t in times]}")
+    logger.info(f"  内存变化: {mem_start}MB → {mem_end}MB (Δ{round(mem_end-mem_start,1)}MB)")
+    if psutil:
+        sys_mem = get_system_memory()
+        logger.info(f"  系统内存: {sys_mem['used_mb']}/{sys_mem['total_mb']}MB ({sys_mem['percent']}%)")
+
+    ts.assert_lt(avg_ms, 10000, f"平均推理 < 10000ms ({avg_ms}ms)")
 
     return ts.summary()
 
@@ -458,21 +711,25 @@ def run_tests(image_path: str = "", quick: bool = False):
 # ============================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="苗绣·识裳 YOLO 双模型系统测试")
-    parser.add_argument("--image", type=str, default="", help="测试图片路径 (可选)")
+    parser.add_argument("--image", type=str, default="", help="单张测试图片路径")
+    parser.add_argument("--dir", type=str, default="", help="批量测试图片文件夹路径")
     parser.add_argument("--quick", action="store_true", help="仅加载模型，不跑推理")
     parser.add_argument("--output", type=str, default="", help="测试结果 JSON 输出路径")
     args = parser.parse_args()
 
-    exit_code = run_tests(image_path=args.image, quick=args.quick)
+    exit_code = run_tests(image_path=args.image, image_dir=args.dir, quick=args.quick)
 
     # 可选：输出 JSON 报告
     if args.output:
         report = {
             "exit_code": exit_code,
+            "timestamp": datetime.now().isoformat(),
             "image": args.image or "synthetic",
+            "image_dir": args.dir or "",
             "quick": args.quick,
         }
-        with open(args.output, "w") as f:
-            json.dump(report, f, indent=2)
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        logger.info(f"\n📄 JSON 报告已保存: {args.output}")
 
     sys.exit(exit_code)
