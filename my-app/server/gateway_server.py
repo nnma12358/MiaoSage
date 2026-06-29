@@ -46,10 +46,16 @@ SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
 
 # ---- 性能监控（复用 perf.py 模块）----
 import time
-from perf import monitor, LatencyTracker
+from perf import monitor, LatencyTracker, ConcurrencyGuard
 
-# 网关代理延迟追踪（yolo/asr/tts 代理调用耗时）
+# 网关代理延迟追踪 & 各服务独立追踪
+yolo_latency  = LatencyTracker(window_size=100)
+llm_latency   = LatencyTracker(window_size=50)
 proxy_latency = LatencyTracker(window_size=100)
+
+# 请求队列守卫（与 board_server 保持一致，供前端面板展示）
+yolo_guard = ConcurrencyGuard(max_concurrent=2, timeout=120)
+llm_guard  = ConcurrencyGuard(max_concurrent=1, timeout=180)
 
 # ---- 服务代理 ----
 def _proxy_post(url: str, files: dict = None, json_data: dict = None, stream: bool = False, timeout: int = 120):
@@ -114,8 +120,32 @@ async def health():
 @app.get("/stats")
 async def stats():
     snap = monitor.snapshot()
+    # 尝试从 YOLO 服务拉取健康信息（获取后端实际状态）
+    yolo_backend = "unknown"
+    yolo_models = {"silver": "N/A", "clothes": "N/A"}
+    try:
+        r = http_requests.get(f"{YOLO_URL}/health", timeout=2)
+        if r.status_code == 200:
+            data = r.json()
+            yolo_backend = "onnxruntime"
+            yolo_models = data.get("models", yolo_models)
+    except Exception:
+        pass
+
     return {
-        **snap,
+        "cpu_percent": snap["cpu_percent"],
+        "cpu_count": snap["cpu_count"],
+        "cpu_temp": snap["cpu_temp"],
+        "mem_percent": snap["mem_percent"],
+        "mem_used_mb": snap["mem_used_mb"],
+        "mem_total_mb": snap["mem_total_mb"],
+        "process_rss_mb": snap["process_rss_mb"],
+        "yolo_latency": yolo_latency.stats(),
+        "llm_latency": llm_latency.stats(),
+        "yolo_queue": yolo_guard.stats(),
+        "llm_queue": llm_guard.stats(),
+        "yolo_backend": yolo_backend,
+        "yolo_models": yolo_models,
         "ollama_model": OLLAMA_MODEL,
         "proxy_latency": proxy_latency.stats(),
     }
@@ -124,17 +154,28 @@ async def stats():
 @app.post("/detect")
 async def detect(image: UploadFile = File(...)):
     contents = await image.read()
+    yolo_guard.enter()
     t0 = time.perf_counter()
     try:
+        await yolo_guard.acquire()
         r = http_requests.post(f"{YOLO_URL}/detect",
             files={"image": (image.filename or "img.jpg", contents, image.content_type or "image/jpeg")},
             timeout=60)
-        proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
+        elapsed = round((time.perf_counter() - t0) * 1000, 1)
+        yolo_latency.record(elapsed)
+        proxy_latency.record(elapsed)
         if r.status_code != 200:
             raise HTTPException(502, f"YOLO 返回 {r.status_code}")
         return r.json()
     except http_requests.ConnectionError:
+        yolo_guard.error()
         raise HTTPException(503, "YOLO 服务不可用")
+    except Exception as e:
+        yolo_guard.error()
+        raise e
+    finally:
+        yolo_guard.release()
+        yolo_guard.exit()
 
 # ---- /asr → asr:8001 ----
 @app.post("/asr")
@@ -165,7 +206,16 @@ async def tts_synthesize(request: Request):
         proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
         if r.status_code != 200:
             raise HTTPException(502, f"TTS 返回 {r.status_code}")
-        return Response(content=r.content, media_type="audio/wav")
+        # 显式设置音频响应头，确保浏览器能解码播放
+        return Response(
+            content=r.content,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": "inline; filename=speech.wav",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(r.content)),
+            },
+        )
     except http_requests.ConnectionError:
         raise HTTPException(503, "TTS 服务不可用")
 
@@ -180,14 +230,26 @@ async def chat(request: Request):
     ollama_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
     payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": False,
                "options": {"temperature": 0.7, "top_p": 0.9}}
+    llm_guard.enter()
+    t0 = time.perf_counter()
     try:
+        await llm_guard.acquire()
         r = http_requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=120)
+        elapsed = round((time.perf_counter() - t0) * 1000, 1)
+        llm_latency.record(elapsed)
         if r.status_code != 200:
             raise HTTPException(502, f"Ollama 返回 {r.status_code}: {r.text[:200]}")
         content = r.json().get("message", {}).get("content", "")
         return {"role": "assistant", "content": content}
     except http_requests.ConnectionError:
+        llm_guard.error()
         raise HTTPException(503, "OLLAMA_UNAVAILABLE")
+    except Exception as e:
+        llm_guard.error()
+        raise e
+    finally:
+        llm_guard.release()
+        llm_guard.exit()
 
 # ---- /chat/stream (SSE) ----
 @app.post("/chat/stream")
