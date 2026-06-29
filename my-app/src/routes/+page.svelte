@@ -1425,6 +1425,31 @@ let micStream = null;                // 录音媒体流
 </main>
 
 <style>
+  /* ========== 全局动画关键帧（必须在 :global 块内定义，否则 Svelte 作用域哈希会导致引用失败）========== */
+  :global {
+    @keyframes dotBounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+      40% { transform: translateY(-5px); opacity: 1; }
+    }
+    @keyframes cursorFlash {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    @keyframes livePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes wave {
+      0%, 100% { transform: scaleY(0.6); opacity: 0.6; }
+      50% { transform: scaleY(1); opacity: 1; }
+    }
+    @keyframes recordPulse {
+      0%, 100% { box-shadow: 0 0 20px rgba(255, 80, 80, 0.35); }
+      50% { box-shadow: 0 0 40px rgba(255, 80, 80, 0.55); }
+    }
+  }
+
   /* ========== CSS 变量 -- 苗绣色调 ========== */
   :root {
     --color-dark-bg: #1a3b70;
@@ -2444,14 +2469,14 @@ let micStream = null;                // 录音媒体流
   }
   .dot {
     font-size: 0.5rem;
-    animation: :global(dotBounce) 1.4s infinite ease-in-out;
+    animation: dotBounce 1.4s infinite ease-in-out;
   }
   .dot:nth-child(2) { animation-delay: 0.2s; }
   .dot:nth-child(3) { animation-delay: 0.4s; }
 
   /* 打字机光标闪烁 */
   .cursor-blink {
-    animation: :global(cursorFlash) 0.8s step-end infinite;
+    animation: cursorFlash 0.8s step-end infinite;
     color: #5ecfd1;
     font-weight: 300;
   }
@@ -2855,18 +2880,6 @@ let micStream = null;                // 录音媒体流
     }
     .status-group {
       display: none;
-    }
-  }
-
-  /* ========== 全局动画关键帧（绕过 Svelte 作用域哈希，确保构建后动画不丢失） ========== */
-  :global {
-    @keyframes dotBounce {
-      0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
-      40% { transform: translateY(-5px); opacity: 1; }
-    }
-    @keyframes cursorFlash {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
     }
   }
 </style>
