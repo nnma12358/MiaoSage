@@ -408,19 +408,20 @@ class BatchTester:
         logger.info(f"{'─' * 60}")
 
         for mode, info in record["modes"].items():
-            logger.info(f"  [{mode.upper():>8}]  "
-                        f"⏱ {info['latency_ms']:>7.1f}ms  "
-                        f"📊 mem Δ{info['mem_delta_mb']:>+.1f}MB", end="")
-
+            parts = [
+                f"  [{mode.upper():>8}]",
+                f"⏱ {info['latency_ms']:>7.1f}ms",
+                f"📊 mem Δ{info['mem_delta_mb']:>+.1f}MB",
+            ]
             if "silver_count" in info:
-                logger.info(f"  🪙银饰:{info['silver_count']}", end="")
+                parts.append(f"🪙银饰:{info['silver_count']}")
                 if info.get("silver_max_conf"):
-                    logger.info(f"  max_conf={info['silver_max_conf']:.3f}", end="")
+                    parts.append(f"max_conf={info['silver_max_conf']:.3f}")
             if "clothes_count" in info:
-                logger.info(f"  👤服装:{info['clothes_count']}", end="")
+                parts.append(f"👤服装:{info['clothes_count']}")
                 if info.get("clothes_max_conf"):
-                    logger.info(f"  max_conf={info['clothes_max_conf']:.3f}", end="")
-            logger.info("")  # newline
+                    parts.append(f"max_conf={info['clothes_max_conf']:.3f}")
+            logger.info("  ".join(parts))
 
             # 打印检测到的具体类别和置信度
             if info.get("silver_classes"):
@@ -464,15 +465,17 @@ class BatchTester:
                     if "clothes_count" in info:
                         clothes_counts.append(info["clothes_count"])
 
-            logger.info(f"  [{mode:>8}]  "
-                        f"⏱ avg={avg_lat}ms  min={min_lat}ms  max={max_lat}ms", end="")
+            parts = [
+                f"  [{mode:>8}]",
+                f"⏱ avg={avg_lat}ms  min={min_lat}ms  max={max_lat}ms",
+            ]
             if silver_counts:
                 avg_s = round(sum(silver_counts) / len(silver_counts), 1)
-                logger.info(f"  🪙avg={avg_s}/图", end="")
+                parts.append(f"🪙avg={avg_s}/图")
             if clothes_counts:
                 avg_c = round(sum(clothes_counts) / len(clothes_counts), 1)
-                logger.info(f"  👤avg={avg_c}/图", end="")
-            logger.info("")
+                parts.append(f"👤avg={avg_c}/图")
+            logger.info("  ".join(parts))
 
         # 内存统计
         mem_deltas = [r.get("mem_peak_delta_mb", 0) for r in self.results if r.get("mem_peak_delta_mb", 0) > 0]
