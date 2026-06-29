@@ -18,18 +18,24 @@ RUN pip install --break-system-packages --no-cache-dir \
     spacemit-ort && \
     rm -rf /root/.cache/pip/*
 
-# 2. 其余 Python 依赖全部从 spacemit 源装
+# 2. 其余 Python 依赖从 spacemit 源装（TTS 核心依赖）
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     fastapi uvicorn soundfile python-multipart \
-    playsound g2p-en pypinyin cn2an jieba \
+    playsound g2p-en pypinyin jieba \
     scipy pyyaml nltk regex click tqdm joblib && \
     rm -rf /root/.cache/pip/*
 
-# 3. transformers（TTS 英文处理，含 tokenizers）
+# 2b. cn2an 等不在 spacemit 源的包从 PyPI 安装
+RUN pip install --break-system-packages --no-cache-dir \
+    cn2an && \
+    rm -rf /root/.cache/pip/*
+
+# 3. transformers（TTS 英文处理），spacemit 源优先 + PyPI 兜底
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    transformers && \
+    --extra-index-url https://pypi.org/simple \
+    transformers tokenizers && \
     rm -rf /root/.cache/pip/*
 
 COPY server/tts_server.py /app/
