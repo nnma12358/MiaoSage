@@ -31,11 +31,13 @@ RUN pip install --break-system-packages --no-cache-dir \
     cn2an && \
     rm -rf /root/.cache/pip/*
 
-# 3. transformers（TTS 英文处理），spacemit 源优先 + PyPI 兜底
+# 3. transformers + tokenizers（仅从 spacemit 源装预编译轮子，避开 PyPI 源码编译）
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    --extra-index-url https://pypi.org/simple \
-    transformers tokenizers && \
+    tokenizers && \
+    pip install --break-system-packages --no-cache-dir \
+    --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
+    --no-deps transformers && \
     rm -rf /root/.cache/pip/*
 
 COPY server/tts_server.py /app/
