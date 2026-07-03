@@ -106,8 +106,8 @@ async def transcribe(audio: UploadFile = File(...)):
         need_cleanup.append(wav_path)
         try:
             subprocess.run([
-                "ffmpeg", "-y", "-i", raw_path,
-                "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                "sox", raw_path,
+                "-r", "16000", "-c", "1", "-b", "16",
                 wav_path
             ], check=True, capture_output=True, timeout=30)
         except subprocess.CalledProcessError as e:
