@@ -317,7 +317,10 @@ let micStream = null;                // 录音媒体流
 
   // --- 设备检测 ---
   function detectDevice() {
-    isMobile = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth < 1024;
+    const hasTouch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+    const smallScreen = window.innerWidth < 1024;
+    isMobile = hasTouch && smallScreen;
+    console.log('📱 detectDevice:', { maxTouchPoints: navigator.maxTouchPoints, hasTouch, innerWidth: window.innerWidth, smallScreen, isMobile });
   }
 
   // --- 摄像头操作 ---
@@ -333,6 +336,7 @@ let micStream = null;                // 录音媒体流
   });
 
   async function openCamera() {
+    console.log('📷 openCamera called, isMobile=', isMobile);
     if (isMobile) { fileInput?.click(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -373,7 +377,7 @@ let micStream = null;                // 录音媒体流
     closeCamera();
   }
 
-  // 手机端：读取原生相机拍摄的照片
+  // 手机端：读取原生相机拍摄的照片 → 自动触发 YOLO 识别
   function handleFilePicked(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -382,6 +386,10 @@ let micStream = null;                // 录音媒体流
       capturedImage = e.target.result;
       cameraActive = false;
       detectedPatterns = [];
+      // 手机端拍照后自动识别，无需二次点击
+      if (isMobile) {
+        setTimeout(() => runYoloDetection(), 300);
+      }
     };
     reader.readAsDataURL(file);
     event.target.value = '';
@@ -913,10 +921,12 @@ let micStream = null;                // 录音媒体流
 
   // 前端音频转码：webm/opus → 16kHz mono PCM WAV（绕过板端 ffmpeg）
   async function convertToWav(blob) {
+    console.log('🎵 convertToWav: input size=', blob.size, 'type=', blob.type);
     // 不传 sampleRate 参数（旧 Chromium 不支持），用默认采样率解码
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const arrayBuf = await blob.arrayBuffer();
     const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+    console.log('🎵 decoded: sampleRate=', audioBuf.sampleRate, 'channels=', audioBuf.numberOfChannels, 'duration=', audioBuf.duration);
 
     // 重采样到 16kHz mono
     const targetRate = 16000;
@@ -953,6 +963,7 @@ let micStream = null;                // 录音媒体流
       view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
     }
     audioCtx.close();
+    console.log('🎵 convertToWav: output WAV size=', wav.size || wav.byteLength, 'bytes');
     return new Blob([wav], { type: 'audio/wav' });
   }
 
@@ -1136,6 +1147,7 @@ let micStream = null;                // 录音媒体流
 
   <!-- 主体内容区：三栏布局 -->
   <div class="main-layout">
+    {#if !isMobile}
     <!-- 左栏：识别预览区（华丽取景框） -->
     <aside class="panel panel-left">
       <div class="panel-title">
@@ -1254,10 +1266,6 @@ let micStream = null;                // 录音媒体流
         </div>
       </div>
 
-      {#if isMobile}
-        <input type="file" accept="image/*" capture="environment" class="hidden-file-input" bind:this={fileInput} onchange={handleFilePicked} />
-      {/if}
-
       <!-- 操作按钮组 -->
       <div class="camera-actions">
         {#if !cameraActive && !capturedImage}
@@ -1323,6 +1331,7 @@ let micStream = null;                // 录音媒体流
       <!-- 隐藏音频元素：TTS 语音播报 -->
       <audio bind:this={audioElement} class="hidden-audio" preload="none"></audio>
     </aside>
+    {/if}
 
     <!-- 中栏：对话区 -->
     <section class="panel panel-chat">
@@ -1459,6 +1468,7 @@ let micStream = null;                // 录音媒体流
       </div>
     </section>
 
+    {#if !isMobile}
     <!-- 右栏：快捷功能与知识库入口 -->
     <aside class="panel panel-right">
       <div class="panel-title">
@@ -1516,9 +1526,34 @@ let micStream = null;                // 录音媒体流
         <span>▸</span> {t.learnMore[lang]}
       </button>
     </aside>
+    {/if}
   </div>
 
-  <!-- 底部导航标签栏 -->
+  {#if isMobile}
+  <!-- 📱 手机端：文件选择器（调用原生相机） -->
+  <input type="file" accept="image/*" capture="environment" class="hidden-file-input" bind:this={fileInput} onchange={handleFilePicked} />
+  {/if}
+
+  {#if isMobile}
+  <!-- 📱 手机端操作栏 -->
+  <footer class="mobile-action-bar">
+    <button class="mob-act-btn" onclick={openCamera} title="拍照识别">
+      <svg viewBox="0 0 24 24" width="24" height="24"><rect x="2" y="6" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </button>
+    <button class="mob-act-btn" class:recording={isRecording} onclick={toggleListening} disabled={isLoading}>
+      {#if isRecording}
+        <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="12" r="10" fill="#ff6b6b" opacity="0.3"/><circle cx="12" cy="12" r="5" fill="#ff4444"/></svg>
+        <span class="mob-rec-label">{t.listening[lang]}</span>
+      {:else}
+        <svg viewBox="0 0 24 24" width="24" height="24"><rect x="9" y="1" width="6" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      {/if}
+    </button>
+    <button class="mob-act-btn" onclick={toggleTTS} title={ttsEnabled ? (lang === 'zh' ? '关闭语音' : 'Mute') : (lang === 'zh' ? '开启语音' : 'Speak')}>
+      <span style="font-size:22px">{ttsEnabled ? '🔊' : '🔇'}</span>
+    </button>
+  </footer>
+  {:else}
+  <!-- 💻 桌面端：底部导航 + 语音栏 -->
   <nav class="bottom-nav">
     <button class="nav-tab active" onclick={() => { userInput = lang === 'zh' ? t.qOutlineZh.zh : t.qOutlineEn.en; handleSendMessage(); }}>
       <span class="nav-icon">◇</span>
@@ -1542,9 +1577,7 @@ let micStream = null;                // 录音媒体流
     </button>
   </nav>
 
-  <!-- 底部语音交互栏 -->
   <footer class="voice-bar">
-    <!-- TTS 语音播报开关 -->
     <button class="btn-tts-toggle" onclick={toggleTTS} title={ttsEnabled ? (lang === 'zh' ? '关闭语音播报' : 'Mute TTS') : (lang === 'zh' ? '开启语音播报' : 'Enable TTS')}>
       {ttsEnabled ? '🔊' : '🔇'}
     </button>
@@ -1571,6 +1604,7 @@ let micStream = null;                // 录音媒体流
     </button>
     <span class="voice-info">{t.voiceInfo[lang]}</span>
   </footer>
+  {/if}
 </main>
 
 <style>
@@ -2996,7 +3030,54 @@ let micStream = null;                // 录音媒体流
     color: #3a5a7a;
     letter-spacing: 0.04em;
   }
-  
+
+  /* ========== 📱 手机端操作栏 ========== */
+  .mobile-action-bar {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    padding: 10px 16px;
+    background: #0a1420;
+    border-top: 1px solid rgba(94, 207, 209, 0.25);
+    gap: 8px;
+  }
+
+  .mob-act-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 64px;
+    height: 56px;
+    border-radius: 16px;
+    border: 1px solid rgba(94, 207, 209, 0.3);
+    background: rgba(94, 207, 209, 0.08);
+    color: #7aaccc;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.65rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mob-act-btn:active {
+    background: rgba(94, 207, 209, 0.22);
+    transform: scale(0.95);
+  }
+
+  .mob-act-btn.recording {
+    background: rgba(255, 80, 80, 0.15);
+    border-color: rgba(255, 107, 107, 0.6);
+    color: #ffaaaa;
+    animation: recordPulse 1.5s ease-in-out infinite;
+  }
+
+  .mob-rec-label {
+    font-size: 0.55rem;
+    color: #ff8888;
+    white-space: nowrap;
+  }
+
   /* ========================================================================
      响应式布局系统（Mobile-First 增强）
      ========================================================================
