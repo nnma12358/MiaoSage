@@ -1,20 +1,18 @@
 # ============================================================
-# 苗绣·识裳 — PC 端 AI 服务（x86_64）
+# 苗绣·识裳 — PC 端 TTS 服务（x86_64）
 # ============================================================
-# 包含：Whisper ASR + edge-tts TTS
-# 部署到 PC（Windows/Linux x86_64 Docker）
+# 将 TTS 从 K1 板卸载到 PC，释放 K1 ~1.5GB 内存给 Ollama。
+# 默认 edge-tts（微软免费），也可设 TTS_BACKEND=piper 离线运行。
 #
 # 构建：
 #   docker build -f Dockerfile.swarm-pc -t miao-sage:swarm-pc .
 #
 # 运行：
-#   docker run -d --name miao-pc-ai --network host \
-#     -e WHISPER_MODEL=tiny -e TTS_BACKEND=edge-tts \
-#     miao-sage:swarm-pc
+#   docker run -d --name miao-tts-pc --network host \
+#     -e TTS_BACKEND=edge-tts miao-sage:swarm-pc
 # ============================================================
 FROM python:3.11-slim-bookworm
 
-# 系统依赖（ffmpeg 用于音频转码）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg curl \
     && rm -rf /var/lib/apt/lists/*
@@ -22,47 +20,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # ---- Python 依赖 ----
-# faster-whisper: CTranslate2 后端，比 openai-whisper 快 4 倍
-# edge-tts: 微软免费 TTS，轻量无需模型
 RUN pip install --no-cache-dir \
-    faster-whisper \
     edge-tts \
     fastapi uvicorn \
     python-multipart \
-    soundfile \
     && rm -rf /root/.cache/pip/*
 
-# ---- 预下载 Whisper tiny 模型（构建时缓存，避免启动时下载） ----
-RUN python3 -c "from faster_whisper import WhisperModel; \
-    m = WhisperModel('tiny', device='cpu', compute_type='int8', download_root='/app/models'); \
-    del m" 2>/dev/null; true
-
 # ---- 服务代码 ----
-COPY server/asr_whisper.py /app/
 COPY server/tts_pc.py /app/
 
 # ---- 健康检查 ----
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8001/health && curl -f http://localhost:8002/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8002/health || exit 1
 
-# ---- 启动脚本 ----
-RUN echo '#!/bin/bash\n\
-echo "=== 苗绣·识裳 PC AI 服务 ==="\n\
-echo "ASR Whisper: port 8001  model=${WHISPER_MODEL:-tiny}"\n\
-echo "TTS:          port 8002  backend=${TTS_BACKEND:-edge-tts}"\n\
-echo ""\n\
-# 并行启动 ASR + TTS\n\
-python3 /app/asr_whisper.py & \n\
-PID_ASR=$!\n\
-python3 /app/tts_pc.py &\n\
-PID_TTS=$!\n\
-echo "ASR PID=$PID_ASR  TTS PID=$PID_TTS"\n\
-# 任一服务崩溃则退出\n\
-wait -n $PID_ASR $PID_TTS\n\
-echo "服务异常退出"\n\
-exit 1\n\
-' > /app/start.sh && chmod +x /app/start.sh
+EXPOSE 8002
 
-EXPOSE 8001 8002
-
-CMD ["/app/start.sh"]
+CMD ["python3", "tts_pc.py"]
