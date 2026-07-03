@@ -994,17 +994,14 @@ let micStream = null;                // 录音媒体流
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
-        // 释放旧 URL（避免内存泄漏）
         const oldSrc = audioElement.src;
         audioElement.src = url;
-        // 首次播放前尝试解锁浏览器音频策略
-        if (!audioUnlocked) {
-          try { await audioElement.play(); audioUnlocked = true; } catch { /* 等用户交互 */ }
-        }
-        if (audioUnlocked) {
-          audioElement.play().catch(e => console.warn('TTS 播放被阻止:', e.message));
-        }
-        // 延迟清理旧 blob URL
+        // 始终尝试播放（浏览器自动播放策略：无用户手势时静默失败）
+        audioElement.play().then(() => {
+          audioUnlocked = true;
+        }).catch(() => {
+          // 浏览器阻止自动播放，等用户交互后下次 TTS 会自动恢复
+        });
         if (oldSrc && oldSrc.startsWith('blob:')) {
           setTimeout(() => URL.revokeObjectURL(oldSrc), 3000);
         }
