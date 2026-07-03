@@ -110,7 +110,7 @@ services:
       options: { max-size: "20m", max-file: "3" }
 
   # ========================
-  # PC — TTS 语音合成
+  # PC — Piper TTS 语音合成
   # ========================
   tts-pc:
     build:
@@ -121,9 +121,11 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - TTS_BACKEND=${TTS_BACKEND:-edge-tts}
-      - TTS_VOICE=${TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+      - TTS_BACKEND=${TTS_BACKEND:-piper}
+      - TTS_VOICE=${TTS_VOICE:-zh_CN-huayan-medium}
       - TTS_MAX_LEN=${TTS_MAX_LEN:-300}
+      - PIPER_MODEL=${PIPER_MODEL:-/opt/piper/zh_CN-huayan-medium.onnx}
+      - PIPER_CONFIG=${PIPER_CONFIG:-/opt/piper/zh_CN-huayan-medium.onnx.json}
     volumes:
       - pc-cache:/root/.cache
     profiles:

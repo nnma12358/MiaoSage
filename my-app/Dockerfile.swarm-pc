@@ -1,26 +1,20 @@
 # ============================================================
-# 苗绣·识裳 — PC 端 TTS 服务（x86_64）
+# 苗绣·识裳 — PC 端 TTS（edge-tts · 零 apt · 纯 pip）
 # ============================================================
-# 将 TTS 从 K1 板卸载到 PC，释放 K1 ~1.5GB 内存给 Ollama。
-# 默认 edge-tts（微软免费），也可设 TTS_BACKEND=piper 离线运行。
+# edge-tts 调用微软免费 TTS API，音质最佳，中文自然。
+# 纯 pip 安装，无需 apt-get，无需下载模型，构建极快。
 #
-# 构建：
+# 构建 & 运行：
 #   docker build -f Dockerfile.swarm-pc -t miao-sage:swarm-pc .
-#
-# 运行：
-#   docker run -d --name miao-tts-pc --network host \
-#     -e TTS_BACKEND=edge-tts miao-sage:swarm-pc
+#   docker run -d --name miao-tts-pc -p 8002:8002 miao-sage:swarm-pc
 # ============================================================
 FROM python:3.11-slim-bookworm
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg curl \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# ---- Python 依赖 ----
-RUN pip install --no-cache-dir \
+# ---- pip 阿里云镜像加速（edge-tts 纯 Python，无 C 编译） ----
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip install --no-cache-dir \
     edge-tts \
     fastapi uvicorn \
     python-multipart \
@@ -29,9 +23,8 @@ RUN pip install --no-cache-dir \
 # ---- 服务代码 ----
 COPY server/tts_pc.py /app/
 
-# ---- 健康检查 ----
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8002/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')" || exit 1
 
 EXPOSE 8002
 

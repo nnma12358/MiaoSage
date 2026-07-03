@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-苗绣·识裳 — TTS 语音合成（PC 端 · 轻量化）
+苗绣·识裳 — TTS 语音合成（PC 端 · edge-tts 轻量）
 ========================================================
-默认使用 edge-tts（微软免费 TTS，无需模型下载，中文音质优秀）。
-可通过环境变量切换后端：
-  TTS_BACKEND=edge-tts    (默认，需联网)
-  TTS_BACKEND=piper        (离线，需下载语音模型)
-
-edge-tts 中文推荐音色：
-  zh-CN-XiaoxiaoNeural   — 女声，甜美自然（默认）
-  zh-CN-YunxiNeural      — 男声，温润
-  zh-CN-XiaoyiNeural     — 女声，活泼
+默认 edge-tts（微软免费，纯 pip，音质最佳，中文自然）。
+可选后端：
+  TTS_BACKEND=edge-tts  (默认，需联网，纯 pip)
+  TTS_BACKEND=piper     (离线高音质，需预下载 piper+模型)
+  TTS_BACKEND=espeak    (离线，需 apt espeak-ng)
 """
-import os, sys, logging, tempfile, asyncio
+import os, sys, logging, tempfile, asyncio, concurrent.futures
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -22,9 +18,12 @@ logger = logging.getLogger("tts-pc")
 
 # ---- 配置 ----
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "edge-tts")
-TTS_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
-TTS_RATE = os.environ.get("TTS_RATE", "+0%")    # 语速调整
+TTS_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoxiaoNeural")  # edge-tts 中文甜美女声
+TTS_RATE = os.environ.get("TTS_RATE", "+0%")    # edge-tts 语速百分比 / piper length-scale / espeak wpm
 TTS_MAX_LEN = int(os.environ.get("TTS_MAX_LEN", "300"))  # PC 端可处理更长文本
+
+# 线程池用于运行同步代码（piper 后端）
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
 class TTSEngine:
@@ -36,7 +35,8 @@ class TTSEngine:
         os.makedirs(self._tmp_dir, exist_ok=True)
         logger.info(f"TTS 后端: {self._backend}, 音色: {TTS_VOICE}")
 
-    def synthesize(self, text: str) -> str:
+    async def synthesize(self, text: str) -> str:
+        """异步合成入口"""
         text = text.strip()
         if not text:
             raise ValueError("文本为空")
@@ -45,58 +45,80 @@ class TTSEngine:
             logger.warning(f"文本过长 ({len(text)} → {TTS_MAX_LEN})，已截断")
             text = text[:TTS_MAX_LEN]
 
-        logger.info(f"TTS 合成 (len={len(text)}): {text[:50]}...")
+        logger.info(f"TTS 合成 [{self._backend}] (len={len(text)}): {text[:50]}...")
 
-        if self._backend == "edge-tts":
-            return asyncio.run(self._synthesize_edge(text))
-        elif self._backend == "piper":
-            return self._synthesize_piper(text)
+        if self._backend == "piper":
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(_thread_pool, self._synthesize_piper, text)
+        elif self._backend == "espeak":
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(_thread_pool, self._synthesize_espeak, text)
+        elif self._backend == "edge-tts":
+            return await self._synthesize_edge(text)
         else:
             raise ValueError(f"未知 TTS 后端: {self._backend}")
 
-    async def _synthesize_edge(self, text: str) -> str:
-        """edge-tts: 微软免费 TTS，音质极佳（需联网）"""
-        import edge_tts
-
-        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.mp3")
-        communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
-        await communicate.save(out_path)
-
+    def _synthesize_espeak(self, text: str) -> str:
+        """espeak-ng: 离线本地 TTS，支持中文，零模型 (~10MB)"""
+        import subprocess
+        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
+        # -v zh: 中文  -s speed: 语速 (80-450)  -w: 输出 WAV
+        cmd = ["espeak-ng", "-v", TTS_VOICE, "-s", TTS_RATE, "-w", out_path, text]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        if result.returncode != 0:
+            err = result.stderr.decode()
+            raise RuntimeError(f"espeak-ng 失败: {err}")
         size_kb = os.path.getsize(out_path) / 1024
-        logger.info(f"edge-tts 合成完成: {out_path} ({size_kb:.1f} KB)")
+        logger.info(f"espeak-ng 合成完成: {out_path} ({size_kb:.1f} KB)")
         return out_path
 
+    async def _synthesize_edge(self, text: str) -> str:
+        """edge-tts: 微软免费 TTS，通过 CLI 子进程调用（隔离事件循环）"""
+        import subprocess, json
+
+        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.mp3")
+        voice = TTS_VOICE
+        rate = TTS_RATE
+
+        def _run():
+            result = subprocess.run(
+                ["edge-tts", "--voice", voice, "--rate", rate, "--text", text, "--write-media", out_path],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"edge-tts CLI failed: {result.stderr[:200]}")
+            return out_path
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(_thread_pool, _run)
+
+        size_kb = os.path.getsize(result) / 1024
+        logger.info(f"edge-tts 合成完成: {result} ({size_kb:.1f} KB)")
+        return result
+
     def _synthesize_piper(self, text: str) -> str:
-        """Piper TTS: 离线轻量 TTS（需预下载模型）"""
+        """Piper TTS: 离线高音质中文（需预下载模型）"""
         import subprocess
 
-        # Piper 模型路径（通过环境变量配置）
         piper_model = os.environ.get("PIPER_MODEL", "/opt/piper/zh_CN-huayan-medium.onnx")
         piper_config = os.environ.get("PIPER_CONFIG", "/opt/piper/zh_CN-huayan-medium.onnx.json")
 
         out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
 
-        result = subprocess.run(
-            ["piper", "-m", piper_model, "-c", piper_config,
-             "-f", out_path, "--output-raw"],
-            input=text.encode("utf-8"),
-            capture_output=True, timeout=60,
-        )
+        # Piper 直接输出 WAV（--output_file 指定 .wav 即可，无需 ffmpeg）
+        cmd = [
+            "piper", "-m", piper_model, "-c", piper_config,
+            "-f", out_path,
+            "--length-scale", TTS_RATE,   # 语速 0.5-2.0
+        ]
+        result = subprocess.run(cmd, input=text.encode("utf-8"),
+                                capture_output=True, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(f"Piper TTS 失败: {result.stderr.decode()}")
 
-        # Piper --output-raw 生成 raw 16-bit 16kHz PCM，需转 WAV 头
-        wav_out = out_path + ".wav"
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "s16le", "-ar", "22050", "-ac", "1",
-            "-i", out_path, wav_out
-        ], check=True, capture_output=True, timeout=10)
-        os.unlink(out_path)
-
-        size_kb = os.path.getsize(wav_out) / 1024
-        logger.info(f"Piper TTS 合成完成: {wav_out} ({size_kb:.1f} KB)")
-        return wav_out
+        size_kb = os.path.getsize(out_path) / 1024
+        logger.info(f"Piper TTS 合成完成: {out_path} ({size_kb:.1f} KB)")
+        return out_path
 
 
 # ---- FastAPI ----
@@ -108,14 +130,14 @@ engine: TTSEngine = None
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     global engine
     engine = TTSEngine()
-    # 预热
+    # 预热（Piper 首次推理较慢）
     try:
         if TTS_BACKEND == "piper":
-            engine.synthesize("预热")
-            logger.info("TTS 预热完成 ✓")
+            await engine.synthesize("预热")
+            logger.info("TTS Piper 预热完成 ✓")
     except Exception as e:
         logger.warning(f"TTS 预热跳过: {e}")
     logger.info("TTS PC 服务就绪 ✓")
@@ -138,7 +160,8 @@ async def synthesize(request: Request):
         raise HTTPException(400, "text 为空")
 
     try:
-        audio_path = engine.synthesize(text)
+        logger.info(f"TTS request: text={repr(text[:80])}")
+        audio_path = await engine.synthesize(text)
 
         # 根据后端决定 MIME 类型
         ext = os.path.splitext(audio_path)[1].lower()
