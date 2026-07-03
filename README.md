@@ -2,13 +2,14 @@
 
 <p align="center">
   <em>苗族服饰文化智能识别与交互系统</em><br>
-  <sub>进迭时空 SpacemiT K1 (RISC-V) · 前后端一体化 · 双模式部署 · 四引擎 AI</sub>
+  <sub>进迭时空 SpacemiT K1 (RISC-V) · 前后端一体化 · 三模式部署 · 四引擎 AI</sub>
 </p>
 
 <p align="center">
   <a href="https://www.spacemit.com/"><img src="https://img.shields.io/badge/platform-riscv64-ff69b4?style=for-the-badge&logo=riscv" alt="Platform"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python" alt="Python"></a>
-  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-4_containers-2496ED?style=for-the-badge&logo=docker" alt="Docker"></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-5_containers-2496ED?style=for-the-badge&logo=docker" alt="Docker"></a>
+  <a href="https://github.com/nnma12358/MiaoSage/tree/swarm"><img src="https://img.shields.io/badge/swarm-K1%2BPC-orange?style=for-the-badge&logo=swarm" alt="Swarm"></a>
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/frontend-SvelteKit-FF3E00?style=for-the-badge&logo=svelte" alt="SvelteKit"></a>
   <a href="https://github.com/nnma12358/MiaoSage"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License"></a>
 </p>
@@ -21,6 +22,7 @@
 - [📦 克隆仓库](#-克隆仓库)
 - [📁 项目结构](#-项目结构)
 - [🚀 部署方式](#-部署方式)
+- [🐝 Swarm 分布式部署](#-swarm-分布式部署)
 - [🏗️ 系统架构](#-系统架构)
 - [🖥️ 硬件要求](#-硬件要求)
 - [🛠️ 技术栈](#-技术栈)
@@ -34,11 +36,11 @@
 |:---:|------|------|
 | 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
-| 🗣️ **语音合成** | MeloTTS | 文字 → 自然语音 · 中文多音色 |
+| 🗣️ **语音合成** | edge-tts / MeloTTS | 文字 → 自然语音 · 可卸载到 PC 运行 |
 | 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 |
 | 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · 端侧运行 |
 
-> 💡 **双模式部署**：Docker 多容器（8GB 内存）或单进程静态部署（2GB 即可），灵活适配不同硬件条件
+> 💡 **三模式部署**：Swarm 分布式（K1+PC） / Docker 多容器（8GB） / 单进程静态（2GB），灵活适配不同硬件条件
 
 ---
 
@@ -87,19 +89,24 @@ miao-sage/
 │   ├── svelte.config.js
 │   ├── tsconfig.json
 │   ├── vite.config.ts
-│   ├── docker-compose.k1.yml         # 多容器编排
+│   ├── docker-compose.k1.yml         # K1 多容器编排
+│   ├── docker-compose.swarm.yml      # Swarm 分布式编排（K1 + PC）
+│   ├── .env.swarm.example            # Swarm 环境变量模板
+│   ├── Dockerfile.k1                 # K1 静态部署容器
 │   ├── Dockerfile.yolo               # YOLO 检测容器
 │   ├── Dockerfile.asr                # ASR 语音识别容器
-│   ├── Dockerfile.tts                # TTS 语音合成容器
-│   ├── Dockerfile.k1                 # K1 静态部署容器
+│   ├── Dockerfile.tts                # TTS 语音合成容器（K1 端）
+│   ├── Dockerfile.swarm-pc           # PC 端 TTS 容器（swarm 用）
 │   ├── .vscode/
 │   │   └── extensions.json
 │   ├── server/                       # Python 后端
 │   │   ├── board_server.py           # 静态部署（单进程一体化）
 │   │   ├── gateway_server.py         # Docker 部署（API 网关）
 │   │   ├── yolo_server.py            # YOLO 检测微服务
-│   │   ├── asr_server.py             # ASR 语音识别微服务
-│   │   ├── tts_server.py             # TTS 语音合成微服务
+│   │   ├── asr_server.py             # ASR 语音识别微服务（K1）
+│   │   ├── tts_server.py             # TTS 语音合成微服务（K1）
+│   │   ├── asr_whisper.py            # Whisper ASR（PC 可选）
+│   │   ├── tts_pc.py                 # TTS PC 服务（edge-tts/piper）
 │   │   ├── perf.py                   # 性能监控模块
 │   │   └── requirements.txt
 │   ├── src/                          # SvelteKit 前端源码
@@ -149,7 +156,13 @@ miao-sage/
 
 ## 🚀 部署方式
 
-### 🐳 方式一：Docker 多容器（推荐 · 8GB 内存）
+### � 方式一：Swarm 分布式（推荐 · K1 + PC 协同）
+
+> TTS 卸载到 PC，K1 专注 YOLO + ASR + LLM，释放 ~1.5GB 内存给 Ollama。
+>
+> 详见 [🐝 Swarm 分布式部署](#-swarm-分布式部署) 完整文档。
+
+### 🐳 方式二：Docker 多容器（8GB 内存）
 
 ```bash
 cd my-app
@@ -158,7 +171,7 @@ bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 
 > 四容器各司其职（YOLO / ASR / TTS / Gateway），易于维护和独立扩缩容。
 
-### 📦 方式二：静态单进程（轻量 · 2GB 内存可用）
+### 📦 方式三：静态单进程（轻量 · 2GB 内存可用）
 
 ```bash
 cd my-app
@@ -171,7 +184,123 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 
 ---
 
+## 🐝 Swarm 分布式部署
+
+> **适用场景**：有一台 PC（x86_64，Windows/Linux）与 K1 在同一局域网，希望将 TTS 等重计算任务卸载到 PC 以释放 K1 内存。
+
+### 架构概览
+
+```
+┌──── K1 板 (riscv64) ─────────────────┐     ┌──── PC (x86_64) ────┐
+│                                       │     │                      │
+│  🚪 Gateway  :443  ← SPA + API 路由   │     │  🗣️ TTS  :8002     │
+│  👁️ YOLO    :8000 ← 双模型物体检测    │     │  edge-tts / piper   │
+│  👂 ASR     :8001 ← SenseVoice 语音   │     │                      │
+│  🧠 Ollama  :11434                    │     │                      │
+│                                       │     │                      │
+└───────────────────────────────────────┘     └──────────────────────┘
+         ▲                                            ▲
+         │         LAN (192.168.x.x)                  │
+         └────────────────┬───────────────────────────┘
+                          │
+                    🌐 浏览器 HTTPS
+```
+
+> **关键变化**：TTS 从 K1 移除，K1 节省 ~1.5GB 内存，Ollama 可使用更大上下文窗口。
+
+### 第一步：配置环境变量
+
+```bash
+cd my-app
+
+# 复制环境变量模板
+cp .env.swarm.example .env.swarm
+
+# 编辑 PC_IP 为你的 PC 实际 IP 地址
+# 例如：PC_IP=192.168.1.100
+```
+
+`.env.swarm` 关键配置：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PC_IP` | `192.168.1.100` | **必改** — PC 的局域网 IP |
+| `TTS_BACKEND` | `edge-tts` | TTS 后端：`edge-tts`（需联网）/ `piper`（离线） |
+| `TTS_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 中文音色（甜美女声） |
+| `TTS_MAX_LEN` | `300` | 单次合成最大字符数（PC 端可设更大） |
+| `OLLAMA_MODEL` | `qwen2.5-instruct` | K1 端 Ollama 模型名 |
+| `YOLO_MODEL` | `yolov8n.onnx` | YOLO 检测模型 |
+
+### 第二步：PC 端启动 TTS
+
+```bash
+# 在 PC 上执行（需要 Docker）
+docker compose -f docker-compose.swarm.yml --profile pc up -d --build
+
+# 验证 TTS 就绪
+curl http://localhost:8002/health
+# → {"status":"ok","backend":"edge-tts","voice":"zh-CN-XiaoxiaoNeural"}
+```
+
+> **PC 依赖**：Docker Desktop（Windows）或 Docker Engine（Linux），无需 GPU。
+
+### 第三步：K1 端启动核心服务
+
+```bash
+# 在 K1 上执行
+cd /path/to/MiaoSage/my-app
+docker compose -f docker-compose.swarm.yml --profile k1 up -d --build
+
+# 验证全链路
+curl -k https://localhost/health
+```
+
+### 第四步：浏览器访问
+
+```
+https://<K1_IP>:443
+```
+
+前端照常使用语音功能——ASR 在 K1 本地处理，TTS 自动路由到 PC 合成后返回音频流，用户无感知。
+
+### 故障排查
+
+| 现象 | 可能原因 | 解决 |
+|------|---------|------|
+| TTS 无响应 | PC_IP 配置错误 | `ping <PC_IP>` 确认 K1 能访问 PC |
+| TTS 合成失败 | PC 无法访问微软 TTS 服务 | 检查 PC 网络，或切换 `TTS_BACKEND=piper` |
+| 网关 503 | PC 防火墙阻止 8002 端口 | `ufw allow 8002` 或关闭防火墙测试 |
+| PC 容器启动失败 | 镜像拉取慢 | 挂代理或手动 `docker pull python:3.11-slim-bookworm` |
+
+### TTS 后端选择
+
+| 后端 | 网络 | 音质 | 内存 | 首次启动 |
+|------|:--:|:--:|------|---------|
+| **edge-tts**（默认） | 需联网 | ⭐⭐⭐⭐⭐ | ~200MB | 即时 |
+| **piper** | 离线 | ⭐⭐⭐ | ~500MB | 需下载语音模型 |
+
+> **推荐**：开发/联网环境用 edge-tts（免模型、音质最佳），生产离线环境用 piper。
+
+切换为 piper 离线模式：
+
+```bash
+# 在 .env.swarm 中设置
+TTS_BACKEND=piper
+
+# 下载中文语音模型（一次性）
+mkdir -p /opt/piper && cd /opt/piper
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx
+wget https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json
+
+# 启动时挂载模型目录（修改 docker-compose.swarm.yml 中 tts-pc 的 volumes）
+#   - /opt/piper:/opt/piper:ro
+```
+
+---
+
 ## 🏗️ 系统架构
+
+### K1 单机模式（Docker / 静态）
 
 <p align="center">
   <em>浏览器 HTTPS 请求 → Gateway 统一入口 → 微服务路由分发</em>
@@ -204,12 +333,12 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 
 | 📋 项目 | 📐 规格 |
 |---------|---------|
-| 🛠️ 开发板 | **SpacemiT Muse Pi Pro (K1)** |
+| 🛠️ 开发板 | **SpacemiT Muse Pi Pro (K1)** + **PC**（Swarm 模式） |
 | 🏗️ 架构 | riscv64 |
 | 💿 系统 |Bianbu LXQt V2.3.3 |
-| 🧮 内存 | 8GB（Docker 模式）/ 2GB（静态模式） |
+| 🧮 内存 | K1: 8GB / PC: 4GB+（Swarm 模式） |
 | 💾 存储 | 16GB+（模型文件约 3GB） |
-| 🌐 网络 | host 模式 + 宿主机 Ollama |
+| 🌐 网络 | host 模式 + 宿主机 Ollama + Swarm 跨设备 LAN |
 
 ---
 
@@ -221,8 +350,8 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 | ⚙️ 后端框架 | **FastAPI** + Uvicorn |
 | 🧠 推理引擎 | ONNX Runtime (`spacemit-ort`) |
 | 🤖 大语言模型 | Ollama + Qwen2.5-Instruct |
-| 🐳 容器编排 | Docker Compose（4 容器） |
-| 💻 目标平台 | RISC-V (riscv64) |
+| 🐳 容器编排 | Docker Compose（5 容器 · Swarm 模式） |
+| 💻 目标平台 | RISC-V (riscv64) + x86_64（Swarm PC） |
 | 🐍 开发语言 | Python 3.12 + TypeScript |
 
 ---
@@ -232,8 +361,10 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 | 📌 | 链接 |
 |:--:|------|
 | 📖 | [应用详细文档](my-app/README.md) |
+| � | [Swarm 分布式编排](my-app/docker-compose.swarm.yml) |
 | 🐳 | [Docker 部署脚本](my-app/deploy/deploy-k1-docker-only.sh) |
 | 📦 | [GitHub 仓库](https://github.com/nnma12358/MiaoSage) |
+| 🌿 | [Swarm 分支](https://github.com/nnma12358/MiaoSage/tree/swarm) |
 
 ---
 
