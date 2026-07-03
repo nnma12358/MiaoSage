@@ -14,8 +14,7 @@ server/venv/
 *.py[cod]
 *.egg-info/
 
-# 前端构建产物（Docker 内 npm run build 重新生成）
-build/
+# 前端构建产物（PC 预构建后 COPY 进镜像，K1 上不再 npm build）
 
 # IDE / 编辑器
 .vscode/
