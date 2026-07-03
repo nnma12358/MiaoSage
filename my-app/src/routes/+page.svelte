@@ -874,19 +874,18 @@ let micStream = null;                // 录音媒体流
       if (e.data.size > 0) audioChunks.push(e.data);
     };
     mediaRecorder.onstop = async () => {
-      // 释放麦克风
       stream.getTracks().forEach(t => t.stop());
       micStream = null;
-
       if (audioChunks.length === 0) return;
 
-      // 使用实际录制格式的 MIME，回退到 webm
-      const blobType = mimeType || 'audio/webm';
-      const blob = new Blob(audioChunks, { type: blobType });
-      const formData = new FormData();
-      formData.append('audio', blob, 'recording.webm');
+      const rawBlob = new Blob(audioChunks, { type: mimeType || 'audio/webm' });
 
       try {
+        // 前端解码 → 16kHz mono PCM WAV（避免依赖板端 ffmpeg）
+        const wavBlob = await convertToWav(rawBlob);
+        const formData = new FormData();
+        formData.append('audio', wavBlob, 'recording.wav');
+
         const resp = await fetch('/asr', { method: 'POST', body: formData });
         if (resp.ok) {
           const data = await resp.json();
@@ -910,6 +909,40 @@ let micStream = null;                // 录音媒体流
 
     mediaRecorder.start();
     isRecording = true;
+  }
+
+  // 前端音频转码：webm/opus → 16kHz mono PCM WAV（绕过板端 ffmpeg）
+  async function convertToWav(blob) {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    const arrayBuf = await blob.arrayBuffer();
+    const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+
+    // 重采样到 16kHz mono
+    const offlineCtx = new OfflineAudioContext(1, audioBuf.duration * 16000, 16000);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = audioBuf;
+    source.connect(offlineCtx.destination);
+    source.start();
+    const rendered = await offlineCtx.startRendering();
+
+    // 编码为 16-bit PCM WAV
+    const pcm = rendered.getChannelData(0);
+    const wav = new ArrayBuffer(44 + pcm.length * 2);
+    const view = new DataView(wav);
+    const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+    writeStr(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); view.setUint32(24, 16000, true);
+    view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    writeStr(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    let off = 44;
+    for (let i = 0; i < pcm.length; i++, off += 2) {
+      const s = Math.max(-1, Math.min(1, pcm[i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    audioCtx.close();
+    return new Blob([wav], { type: 'audio/wav' });
   }
 
   function stopRecording() {
