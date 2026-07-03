@@ -159,7 +159,7 @@ let micStream = null;                // 录音媒体流
       return;
     }
 
-    // 2. 使用 Permissions API 查询真实权限
+    // 2. 使用 Permissions API 查询真实权限（仅查询，不触发请求）
     try {
       if (navigator.permissions && navigator.permissions.query) {
         const result = await navigator.permissions.query({ name: 'microphone' });
@@ -167,31 +167,27 @@ let micStream = null;                // 录音媒体流
         micOnline = result.state === 'granted';
         console.log('麦克风权限:', result.state);
 
-        // 监听权限变化（用户手动修改浏览器设置时）
+        // 监听权限变化
         result.onchange = () => {
           micPermission = result.state;
           micOnline = result.state === 'granted';
           console.log('麦克风权限变更:', result.state);
         };
+
+        // 'prompt' 表示用户尚未决定，等点击录音按钮时再请求
+        if (result.state === 'prompt') {
+          micOnline = false;  // 尚未授权，显示红色
+          console.log('麦克风权限待用户授权（点击录音按钮时触发）');
+        }
         return;
       }
     } catch (e) {
-      // Permissions API 不支持时回退
-      console.warn('Permissions API 不可用，尝试直接访问麦克风:', e.message);
+      console.warn('Permissions API 不可用:', e.message);
     }
 
-    // 3. 回退：尝试打开麦克风来检测权限（仅探测，立即释放）
-    try {
-      const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      testStream.getTracks().forEach(t => t.stop());
-      micOnline = true;
-      micPermission = 'granted';
-      console.log('麦克风可用（回退检测）');
-    } catch (e) {
-      micOnline = false;
-      micPermission = 'denied';
-      console.warn('麦克风不可用:', e.message);
-    }
+    // 3. Permissions API 不可用时，不做探测（避免无手势被浏览器拒绝）
+    // 保持 micOnline=false，等用户点击录音按钮时再通过 catch 更新
+    console.log('无法查询麦克风权限，等待用户交互触发');
   }
 
   // --- 实时监测指标 ---
@@ -814,24 +810,15 @@ let micStream = null;                // 录音媒体流
   }
 
   async function startRecording() {
-    // 多级回退：宽松约束 → 严格约束 → 报告具体错误
-    const constraintsList = [
-      { audio: true },                                              // 最宽松，兼容性最好
-      { audio: { echoCancellation: true, noiseSuppression: true } }, // 降噪
-      { audio: { sampleRate: 16000, channelCount: 1 } },            // 低采样
-    ];
-
     let stream = null;
     let lastError = null;
 
-    for (const constraints of constraintsList) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        break;  // 成功则退出
-      } catch (e) {
-        lastError = e;
-        console.warn('getUserMedia 尝试失败:', constraints, e.message);
-      }
+    // 仅用最宽松约束（兼容性最好），用户手势已满足浏览器要求
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      lastError = e;
+      console.warn('getUserMedia 失败:', e.name, e.message);
     }
 
     if (!stream) {
@@ -839,19 +826,12 @@ let micStream = null;                // 录音媒体流
       micOnline = false;
       micPermission = 'denied';
 
-      // 自签名证书常见问题提示
-      let hint = '';
-      if (lastError?.name === 'NotAllowedError') {
-        hint = lang === 'zh'
-          ? '\n\n💡 可能原因：\n1. 浏览器未授予麦克风权限\n2. 自签名证书需在浏览器中手动信任\n3. 请在地址栏点击锁图标 → 允许麦克风'
-          : '\n\n💡 Possible causes:\n1. Browser denied mic permission\n2. Self-signed cert needs manual trust\n3. Click lock icon in address bar → Allow mic';
-      } else if (lastError?.name === 'NotFoundError') {
-        hint = lang === 'zh'
-          ? '\n\n💡 未检测到麦克风设备，请检查硬件连接。'
-          : '\n\n💡 No microphone detected. Check hardware.';
-      }
+      // 统一权限引导（不区分错误类型，避免误导）
+      const hint = lang === 'zh'
+        ? '\n\n💡 解决方法：\n1. 点击地址栏左侧锁图标\n2. 找到"麦克风" → 选择"允许"\n3. 刷新页面后点击 🎤 按钮重试'
+        : '\n\n💡 Fix:\n1. Click lock icon in address bar\n2. Find "Microphone" → "Allow"\n3. Refresh page and retry';
 
-      alert((lang === 'zh' ? '无法访问麦克风，请检查浏览器权限设置。' : 'Cannot access microphone. Please check browser permissions.') + hint);
+      alert((lang === 'zh' ? '无法访问麦克风，请检查浏览器权限设置。' : 'Cannot access microphone. Check browser permissions.') + hint);
       isRecording = false;
       return;
     }
@@ -861,25 +841,14 @@ let micStream = null;                // 录音媒体流
     micOnline = true;
     micPermission = 'granted';
 
-    // 多级回退 MIME 类型（板端 Chromium 可能不支持 webm）
-    const mimeTypes = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-      '',  // 空字符串 = 浏览器默认
-    ];
+    // MIME 回退（板端 Chromium 可能不支持 webm）
+    const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', ''];
     let mimeType = '';
     for (const mt of mimeTypes) {
-      if (!mt || MediaRecorder.isTypeSupported(mt)) {
-        mimeType = mt;
-        break;
-      }
+      if (!mt || MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; }
     }
-    console.log('MediaRecorder 使用 MIME:', mimeType || '(浏览器默认)');
 
-    const recorderOpts = mimeType ? { mimeType } : {};
-    mediaRecorder = new MediaRecorder(stream, recorderOpts);
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) audioChunks.push(e.data);
