@@ -79,7 +79,32 @@ services:
         max-size: "20m"
         max-file: "3"
 
-  # ---- TTS 语音合成 ----
+  # ---- TTS 语音合成（轻量 edge-tts · 推荐） ----
+  # 纯 Python，~100MB 内存，音质最佳。需 K1 能访问微软 TTS API。
+  tts-edge:
+    build:
+      context: .
+      dockerfile: Dockerfile.tts-edge
+    image: miao-xiu:tts-edge
+    container_name: miao-tts
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TTS_BACKEND=${TTS_BACKEND:-edge-tts}
+      - TTS_VOICE=${TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ---- TTS 语音合成（MeloTTS · 离线备选） ----
+  # ONNX 推理，~1.5GB 内存，离线运行。适合无网络环境。
   tts:
     build:
       context: .
@@ -88,6 +113,8 @@ services:
     container_name: miao-tts
     restart: unless-stopped
     network_mode: host
+    profiles:
+      - offline
     environment:
       - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
@@ -124,7 +151,7 @@ services:
     depends_on:
       - yolo
       - asr
-      - tts
+      - tts-edge
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-instruct}
