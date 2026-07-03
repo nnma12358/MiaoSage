@@ -141,9 +141,58 @@ let micStream = null;                // 录音媒体流
 
   // --- 设备状态 ---
   let camOnline = $state(true);
-  let micOnline = $state(true);
+  let micOnline = $state(false);  // 启动时通过 checkMicPermission 真实检测
   let modelReady = $state(true);
   let npuReady = $state(true);
+
+  // ================================================================
+  // 麦克风权限检测（真实查询浏览器权限状态）
+  // ================================================================
+  let micPermission = $state('prompt');  // 'granted' | 'denied' | 'prompt'
+
+  async function checkMicPermission() {
+    // 1. 检查安全上下文（getUserMedia 需要 HTTPS 或 localhost）
+    if (!window.isSecureContext) {
+      console.warn('非安全上下文，麦克风不可用。请使用 HTTPS 访问。');
+      micOnline = false;
+      micPermission = 'denied';
+      return;
+    }
+
+    // 2. 使用 Permissions API 查询真实权限
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const result = await navigator.permissions.query({ name: 'microphone' });
+        micPermission = result.state;
+        micOnline = result.state === 'granted';
+        console.log('麦克风权限:', result.state);
+
+        // 监听权限变化（用户手动修改浏览器设置时）
+        result.onchange = () => {
+          micPermission = result.state;
+          micOnline = result.state === 'granted';
+          console.log('麦克风权限变更:', result.state);
+        };
+        return;
+      }
+    } catch (e) {
+      // Permissions API 不支持时回退
+      console.warn('Permissions API 不可用，尝试直接访问麦克风:', e.message);
+    }
+
+    // 3. 回退：尝试打开麦克风来检测权限（仅探测，立即释放）
+    try {
+      const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      testStream.getTracks().forEach(t => t.stop());
+      micOnline = true;
+      micPermission = 'granted';
+      console.log('麦克风可用（回退检测）');
+    } catch (e) {
+      micOnline = false;
+      micPermission = 'denied';
+      console.warn('麦克风不可用:', e.message);
+    }
+  }
 
   // --- 实时监测指标 ---
   let fps = $state(28);              // 实时帧率
@@ -765,66 +814,113 @@ let micStream = null;                // 录音媒体流
   }
 
   async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 48000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
-      });
-      micStream = stream;
-      audioChunks = [];
+    // 多级回退：宽松约束 → 严格约束 → 报告具体错误
+    const constraintsList = [
+      { audio: true },                                              // 最宽松，兼容性最好
+      { audio: { echoCancellation: true, noiseSuppression: true } }, // 降噪
+      { audio: { sampleRate: 16000, channelCount: 1 } },            // 低采样
+    ];
 
-      // 优先使用 audio/webm（浏览器通用），后端 SenseVoice 对常见格式兼容性好
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
+    let stream = null;
+    let lastError = null;
 
-      mediaRecorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunks.push(e.data);
-      };
-      mediaRecorder.onstop = async () => {
-        // 释放麦克风
-        stream.getTracks().forEach(t => t.stop());
-        micStream = null;
-
-        if (audioChunks.length === 0) return;
-
-        const blob = new Blob(audioChunks, { type: mimeType });
-        const formData = new FormData();
-        formData.append('audio', blob, 'recording.webm');
-
-        try {
-          const resp = await fetch('/asr', { method: 'POST', body: formData });
-          if (resp.ok) {
-            const data = await resp.json();
-            const text = (data.text || '').trim();
-            if (text) {
-              // 仅填入输入框，不自动发送——由用户确认后手动发送
-              userInput = text;
-            } else {
-              // 仅显示短暂错误提示，不写入聊天记录
-              errorTip = lang === 'zh' ? '🎤 未识别到语音内容，请重试。' : '🎤 No speech detected. Retry.';
-              setTimeout(() => { if (errorTip === (lang === 'zh' ? '🎤 未识别到语音内容，请重试。' : '🎤 No speech detected. Retry.')) errorTip = ''; }, 3000);
-            }
-          } else {
-            errorTip = lang === 'zh' ? '⚠️ ASR 服务异常' : '⚠️ ASR error';
-            setTimeout(() => { if (errorTip === (lang === 'zh' ? '⚠️ ASR 服务异常' : '⚠️ ASR error')) errorTip = ''; }, 3000);
-          }
-        } catch (e) {
-          console.error('ASR 请求失败:', e);
-          errorTip = lang === 'zh' ? '⚠️ 无法连接语音识别服务' : '⚠️ Cannot connect ASR';
-          setTimeout(() => { if (errorTip === (lang === 'zh' ? '⚠️ 无法连接语音识别服务' : '⚠️ Cannot connect ASR')) errorTip = ''; }, 3000);
-        }
-      };
-
-      mediaRecorder.start();
-      isRecording = true;
-    } catch (err) {
-      console.error('麦克风访问失败:', err);
-      alert(lang === 'zh'
-        ? '无法访问麦克风，请检查浏览器权限设置。'
-        : 'Cannot access microphone. Please check browser permissions.');
-      isRecording = false;
+    for (const constraints of constraintsList) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        break;  // 成功则退出
+      } catch (e) {
+        lastError = e;
+        console.warn('getUserMedia 尝试失败:', constraints, e.message);
+      }
     }
+
+    if (!stream) {
+      console.error('麦克风访问失败:', lastError);
+      micOnline = false;
+      micPermission = 'denied';
+
+      // 自签名证书常见问题提示
+      let hint = '';
+      if (lastError?.name === 'NotAllowedError') {
+        hint = lang === 'zh'
+          ? '\n\n💡 可能原因：\n1. 浏览器未授予麦克风权限\n2. 自签名证书需在浏览器中手动信任\n3. 请在地址栏点击锁图标 → 允许麦克风'
+          : '\n\n💡 Possible causes:\n1. Browser denied mic permission\n2. Self-signed cert needs manual trust\n3. Click lock icon in address bar → Allow mic';
+      } else if (lastError?.name === 'NotFoundError') {
+        hint = lang === 'zh'
+          ? '\n\n💡 未检测到麦克风设备，请检查硬件连接。'
+          : '\n\n💡 No microphone detected. Check hardware.';
+      }
+
+      alert((lang === 'zh' ? '无法访问麦克风，请检查浏览器权限设置。' : 'Cannot access microphone. Please check browser permissions.') + hint);
+      isRecording = false;
+      return;
+    }
+
+    micStream = stream;
+    audioChunks = [];
+    micOnline = true;
+    micPermission = 'granted';
+
+    // 多级回退 MIME 类型（板端 Chromium 可能不支持 webm）
+    const mimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4',
+      '',  // 空字符串 = 浏览器默认
+    ];
+    let mimeType = '';
+    for (const mt of mimeTypes) {
+      if (!mt || MediaRecorder.isTypeSupported(mt)) {
+        mimeType = mt;
+        break;
+      }
+    }
+    console.log('MediaRecorder 使用 MIME:', mimeType || '(浏览器默认)');
+
+    const recorderOpts = mimeType ? { mimeType } : {};
+    mediaRecorder = new MediaRecorder(stream, recorderOpts);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+    mediaRecorder.onstop = async () => {
+      // 释放麦克风
+      stream.getTracks().forEach(t => t.stop());
+      micStream = null;
+
+      if (audioChunks.length === 0) return;
+
+      // 使用实际录制格式的 MIME，回退到 webm
+      const blobType = mimeType || 'audio/webm';
+      const blob = new Blob(audioChunks, { type: blobType });
+      const formData = new FormData();
+      formData.append('audio', blob, 'recording.webm');
+
+      try {
+        const resp = await fetch('/asr', { method: 'POST', body: formData });
+        if (resp.ok) {
+          const data = await resp.json();
+          const text = (data.text || '').trim();
+          if (text) {
+            userInput = text;
+          } else {
+            errorTip = lang === 'zh' ? '🎤 未识别到语音内容，请重试。' : '🎤 No speech detected. Retry.';
+            setTimeout(() => { if (errorTip === (lang === 'zh' ? '🎤 未识别到语音内容，请重试。' : '🎤 No speech detected. Retry.')) errorTip = ''; }, 3000);
+          }
+        } else {
+          errorTip = lang === 'zh' ? '⚠️ ASR 服务异常' : '⚠️ ASR error';
+          setTimeout(() => { if (errorTip === (lang === 'zh' ? '⚠️ ASR 服务异常' : '⚠️ ASR error')) errorTip = ''; }, 3000);
+        }
+      } catch (e) {
+        console.error('ASR 请求失败:', e);
+        errorTip = lang === 'zh' ? '⚠️ 无法连接语音识别服务' : '⚠️ Cannot connect ASR';
+        setTimeout(() => { if (errorTip === (lang === 'zh' ? '⚠️ 无法连接语音识别服务' : '⚠️ Cannot connect ASR')) errorTip = ''; }, 3000);
+      }
+    };
+
+    mediaRecorder.start();
+    isRecording = true;
   }
 
   function stopRecording() {
@@ -896,6 +992,7 @@ let micStream = null;                // 录音媒体流
   onMount(() => {
     startFpsMonitor();
     startCpuMonitor();
+    checkMicPermission();  // 真实检测麦克风权限
     // 欢迎消息
     setTimeout(() => {
       addBotMessage(lang === 'zh' ? t.welcomeZh.zh : t.welcomeEn.en);
