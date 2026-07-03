@@ -4,7 +4,7 @@
 
   // --- 状态变量 ---
  let isListening = $state(false);
-let isMobile = false;              // 设备检测
+let isMobile = $state(false);              // 设备检测
 let cameraStream = null;
 let videoElement = $state(undefined);  // 需要响应式，以便 $effect 追踪 DOM 绑定
 let canvasElement;                 
@@ -322,7 +322,7 @@ let micStream = null;                // 录音媒体流
 
   // --- 摄像头操作 ---
   let pendingStream = $state(null);
-  let fileInput;  // 手机端隐藏 <input type=file>
+  let fileInput = $state(undefined);  // 手机端隐藏 <input type=file>
 
   // 响应式副作用：当 cameraActive 变为 true 且 videoElement 就绪后，自动绑定流
   $effect(() => {
@@ -913,29 +913,40 @@ let micStream = null;                // 录音媒体流
 
   // 前端音频转码：webm/opus → 16kHz mono PCM WAV（绕过板端 ffmpeg）
   async function convertToWav(blob) {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // 不传 sampleRate 参数（旧 Chromium 不支持），用默认采样率解码
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const arrayBuf = await blob.arrayBuffer();
     const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
 
     // 重采样到 16kHz mono
-    const offlineCtx = new OfflineAudioContext(1, audioBuf.duration * 16000, 16000);
+    const targetRate = 16000;
+    const duration = audioBuf.duration;
+    const offlineCtx = new OfflineAudioContext(1, Math.ceil(duration * targetRate), targetRate);
     const source = offlineCtx.createBufferSource();
     source.buffer = audioBuf;
     source.connect(offlineCtx.destination);
-    source.start();
+    source.start(0);
     const rendered = await offlineCtx.startRendering();
 
     // 编码为 16-bit PCM WAV
     const pcm = rendered.getChannelData(0);
-    const wav = new ArrayBuffer(44 + pcm.length * 2);
+    const dataLen = pcm.length * 2;
+    const wav = new ArrayBuffer(44 + dataLen);
     const view = new DataView(wav);
     const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-    writeStr(0, 'RIFF'); view.setUint32(4, 36 + pcm.length * 2, true);
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataLen, true);
     writeStr(8, 'WAVE');
-    writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true); view.setUint32(24, 16000, true);
-    view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-    writeStr(36, 'data'); view.setUint32(40, pcm.length * 2, true);
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);        // PCM
+    view.setUint16(20, 1, true);         // format = 1
+    view.setUint16(22, 1, true);         // channels = 1
+    view.setUint32(24, targetRate, true); // sampleRate
+    view.setUint32(28, targetRate * 2, true); // byteRate
+    view.setUint16(32, 2, true);         // blockAlign
+    view.setUint16(34, 16, true);        // bitsPerSample
+    writeStr(36, 'data');
+    view.setUint32(40, dataLen, true);
     let off = 44;
     for (let i = 0; i < pcm.length; i++, off += 2) {
       const s = Math.max(-1, Math.min(1, pcm[i]));
