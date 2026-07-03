@@ -152,13 +152,21 @@ async def stats():
 
 # ---- /detect → yolo:8000 ----
 @app.post("/detect")
-async def detect(image: UploadFile = File(...)):
+async def detect(
+    image: UploadFile = File(...),
+    mode: str = "silver",
+    person_filter: str = "true",
+):
     contents = await image.read()
     yolo_guard.enter()
     t0 = time.perf_counter()
     try:
         await yolo_guard.acquire()
-        r = http_requests.post(f"{YOLO_URL}/detect",
+        # 转发 mode 和 person_filter 参数给 YOLO 后端
+        params = {"mode": mode, "person_filter": person_filter}
+        r = http_requests.post(
+            f"{YOLO_URL}/detect",
+            params=params,
             files={"image": (image.filename or "img.jpg", contents, image.content_type or "image/jpeg")},
             timeout=60)
         elapsed = round((time.perf_counter() - t0) * 1000, 1)

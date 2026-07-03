@@ -26,15 +26,20 @@ RUN pip install --break-system-packages --no-cache-dir \
     scipy pyyaml nltk regex click tqdm joblib && \
     rm -rf /root/.cache/pip/*
 
+# 2a. 预下载 NLTK 数据（punkt/punkt_tab — TTS 英文分词必需，避免运行时下载失败）
+RUN python3 -m nltk.downloader punkt punkt_tab averaged_perceptron_tagger_eng \
+    -d /usr/local/share/nltk_data 2>/dev/null; true
+
 # 2b. cn2an 等不在 spacemit 源的包从 PyPI 安装
 RUN pip install --break-system-packages --no-cache-dir \
     cn2an && \
     rm -rf /root/.cache/pip/*
 
-# 3. transformers + tokenizers（仅从 spacemit 源装预编译轮子，避开 PyPI 源码编译）
+# 3. transformers + tokenizers（仅从 spacemit 源装预编译轮子，手动补齐传递依赖）
+#    注意: huggingface-hub 必须 <1.0 否则与 spacemit 源的 transformers 5.x 不兼容
 RUN pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    tokenizers && \
+    requests tokenizers "huggingface-hub<1.0" safetensors && \
     pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     --no-deps transformers && \

@@ -408,22 +408,36 @@ let micStream = null;                // 录音媒体流
       const data = await response.json();
       
       // 记录实际推理耗时 (ms)
-      inferTime = Math.round(performance.now() - t0);
+      inferTime = data.cost_ms?.total ?? Math.round(performance.now() - t0);
 
-      // 解析 YOLO 返回结果：预期格式 { detections: [{ class: "xxx", confidence: 0.98, bbox: [x,y,w,h] }] }
-      const detections = data.detections || [];
+      // 兼容新旧 YOLO API 格式
+      // 新版: { silver_filtered: [...], silver: [...], clothes: [...] }
+      // 旧版: { detections: [...] }
+      const rawDetections = data.silver_filtered || data.silver || data.detections || [];
 
-      // 映射为可视化格式
-      detectedPatterns = detections.map(d => ({
-        x: d.bbox?.[0] ?? 60,
-        y: d.bbox?.[1] ?? 40,
-        width: d.bbox?.[2] ?? 160,
-        height: d.bbox?.[3] ?? 120,
-        label: yoloLabelMap[d.class?.toLowerCase()] || d.class || t.unknown[lang],
-        confidence: d.confidence ?? 0.5
-      }));
+      // 映射为可视化格式（bbox 兼容对象 {x1,y1,x2,y2} 和数组 [x,y,w,h]）
+      detectedPatterns = rawDetections.map(d => {
+        const b = d.bbox;
+        // 对象格式 {x1,y1,x2,y2}
+        if (b && typeof b.x1 === 'number') {
+          return {
+            x: b.x1, y: b.y1,
+            width: b.x2 - b.x1,
+            height: b.y2 - b.y1,
+            label: d.class || t.unknown[lang],
+            confidence: d.confidence ?? 0.5
+          };
+        }
+        // 数组格式 [x, y, w, h]
+        return {
+          x: b?.[0] ?? 60, y: b?.[1] ?? 40,
+          width: b?.[2] ?? 160, height: b?.[3] ?? 120,
+          label: d.class || t.unknown[lang],
+          confidence: d.confidence ?? 0.5
+        };
+      });
 
-      if (detections.length === 0) {
+      if (rawDetections.length === 0) {
         // 未检测到任何目标
         identificationResult = null;
         recognitionFailed = true;
@@ -434,9 +448,9 @@ let micStream = null;                // 录音媒体流
       }
 
       // 取置信度最高的检测结果
-      const topDetection = detections.reduce((best, cur) => 
+      const topDetection = rawDetections.reduce((best, cur) => 
         cur.confidence > best.confidence ? cur : best
-      , detections[0]);
+      , rawDetections[0]);
 
       // 尝试映射到苗族服饰知识库
       const mappedType = yoloLabelMap[topDetection.class?.toLowerCase()];
@@ -828,8 +842,8 @@ let micStream = null;                // 录音媒体流
     // 提取纯文本（去除 HTML 标签等）
     const plain = text.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, '').trim();
     if (!plain) return;
-    // 截断到 500 字，避免 TTS 模型超负载
-    const short = plain.length > 500 ? plain.substring(0, 500) : plain;
+    // 截断到 100 字，避免 K1 推理超时（每句解码 ~24s）
+    const short = plain.length > 100 ? plain.substring(0, 100) : plain;
 
     try {
       const resp = await fetch('/tts', {
@@ -2850,36 +2864,594 @@ let micStream = null;                // 录音媒体流
     letter-spacing: 0.04em;
   }
   
-  /* 响应式调整 */
-  @media (max-width: 900px) {
+  /* ========================================================================
+     响应式布局系统（Mobile-First 增强）
+     ========================================================================
+     断点策略：
+       ≤ 480px  — 手机竖屏（紧凑单栏）
+       ≤ 768px  — 手机横屏 / 小平板（单栏）
+       ≤ 1024px — 平板（双栏：相机 + 聊天）
+       > 1024px — 桌面（三栏，当前默认布局）
+  ======================================================================== */
+
+  /* ---------- 手机竖屏 / 小屏 (≤ 480px) ---------- */
+  @media (max-width: 480px) {
+    :global(body) {
+      font-size: 14px;
+      overflow-y: auto;
+      height: 100dvh;
+    }
+
+    .app-container {
+      height: 100dvh;
+      border-left: none;
+      border-right: none;
+      border-radius: 0;
+      margin: 0;
+    }
+
+    .app-container::after {
+      display: none; /* 底部装饰太占资源，手机端隐藏 */
+    }
+
+    /* --- 头部 --- */
+    .app-header {
+      margin: 0;
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+    }
+
+    .header-pattern-top,
+    .header-pattern-bottom {
+      height: 10px;
+    }
+
+    .header-main {
+      padding: 6px 10px;
+      gap: 6px;
+    }
+
+    .top-logo-text {
+      font-size: 0.9rem;
+      letter-spacing: 0.04em;
+    }
+
+    .ox-horn-icon svg {
+      width: 40px;
+      height: 20px;
+    }
+
+    .status-group {
+      display: none;
+    }
+
+    .perf-panel {
+      gap: 6px;
+      font-size: 0.6rem;
+    }
+
+    .perf-item {
+      white-space: nowrap;
+    }
+
+    /* 手机端最多显示 3 个性能指标 */
+    .perf-panel .perf-item:nth-child(n+4) {
+      display: none;
+    }
+
+    .btn-lang {
+      width: 28px;
+      height: 24px;
+      font-size: 0.6rem;
+      border-radius: 12px;
+    }
+
+    /* --- 主布局：单栏 --- */
     .main-layout {
       flex-direction: column;
+      gap: 0;
     }
-    .panel-left, .panel-right {
+
+    .panel {
+      padding: 8px;
+      border-radius: 0;
+    }
+
+    .panel-left {
       width: 100%;
       flex-shrink: 1;
-    }
-    .panel-left {
+      max-height: 38vh;
+      min-height: 0;
+      overflow-y: auto;
       order: 1;
-      max-height: 45vh;
+      border-bottom: 1px solid rgba(74, 110, 140, 0.2);
     }
+
+    .panel-chat {
+      order: 2;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .panel-right {
+      display: none; /* 手机端隐藏右栏，内容通过底部导航标签触达 */
+      order: 3;
+    }
+
+    .panel-title {
+      font-size: 0.78rem;
+      padding-bottom: 6px;
+      margin-bottom: 6px;
+    }
+
+    /* --- 取景框 --- */
+    .ornate-frame {
+      margin-bottom: 6px;
+    }
+
+    .frame-corner {
+      display: none; /* 角花装饰隐藏以节省空间 */
+    }
+
+    .frame-content {
+      aspect-ratio: auto;
+      min-height: 140px;
+      max-height: 180px;
+    }
+
+    .camera-label {
+      font-size: 0.55rem;
+      padding: 1px 6px;
+    }
+
+    .placeholder-hint {
+      font-size: 0.62rem;
+    }
+
+    .placeholder-illustration svg {
+      width: 100px;
+      height: 70px;
+    }
+
+    /* --- 相机操作按钮 --- */
+    .camera-actions {
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .btn-camera-main,
+    .btn-capture,
+    .btn-identify-main,
+    .btn-retake-main,
+    .btn-close-cam {
+      padding: 10px 8px;
+      font-size: 0.72rem;
+      border-radius: 10px;
+      min-height: 44px; /* 触控友好 */
+    }
+
+    /* --- 聊天区域 --- */
+    .chat-messages {
+      gap: 8px;
+      padding: 4px 0;
+    }
+
+    .bubble-content {
+      max-width: 85%; /* 手机端气泡更宽 */
+    }
+
+    .bubble-text {
+      padding: 8px 12px;
+      font-size: 0.75rem;
+      border-radius: 12px;
+    }
+
+    .bubble-role {
+      font-size: 0.6rem;
+    }
+
+    .bubble-time {
+      font-size: 0.55rem;
+    }
+
+    .bubble-avatar .avatar {
+      width: 26px;
+      height: 26px;
+    }
+
+    /* --- 空状态欢迎卡片 --- */
+    .miao-girl-card {
+      padding: 16px 12px;
+      max-width: 100%;
+    }
+
+    .girl-avatar {
+      width: 64px;
+      height: 64px;
+    }
+
+    .girl-name {
+      font-size: 0.95rem;
+    }
+
+    .girl-desc {
+      font-size: 0.7rem;
+      margin-bottom: 10px;
+    }
+
+    .quick-cards {
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .quick-card-btn {
+      font-size: 0.62rem;
+      padding: 8px 6px;
+      min-height: 44px;
+    }
+
+    .btn-welcome-session {
+      padding: 8px 18px;
+      font-size: 0.72rem;
+      min-height: 44px;
+    }
+
+    /* --- 输入框（粘底） --- */
+    .chat-input {
+      margin-top: 6px;
+      gap: 6px;
+    }
+
+    .chat-input input {
+      height: 42px;
+      padding: 0 12px;
+      font-size: 0.75rem;
+      border-radius: 22px;
+    }
+
+    .btn-send {
+      height: 42px;
+      padding: 0 16px;
+      font-size: 0.75rem;
+      border-radius: 22px;
+      min-width: 56px;
+    }
+
+    /* --- 识别结果卡片 --- */
+    .result-card {
+      padding: 8px;
+      margin-top: 6px;
+    }
+
+    .badge-type {
+      font-size: 0.7rem;
+    }
+
+    .badge-confidence {
+      font-size: 0.6rem;
+      padding: 1px 8px;
+    }
+
+    .detail-row {
+      font-size: 0.65rem;
+      gap: 4px;
+    }
+
+    /* --- 未识别卡片 --- */
+    .unrecognized-card {
+      padding: 10px;
+      margin-top: 6px;
+    }
+
+    .unrecognized-title {
+      font-size: 0.78rem;
+    }
+
+    .unrecognized-desc {
+      font-size: 0.62rem;
+    }
+
+    .btn-retake {
+      padding: 8px 16px;
+      font-size: 0.7rem;
+      min-height: 44px;
+    }
+
+    /* --- 底部导航标签栏 --- */
+    .bottom-nav {
+      padding: 2px 6px;
+      gap: 0;
+    }
+
+    .nav-tab {
+      padding: 6px 2px 4px;
+      gap: 2px;
+      border-radius: 6px;
+      min-height: 44px;
+    }
+
+    .nav-icon {
+      font-size: 0.75rem;
+    }
+
+    .nav-label {
+      font-size: 0.52rem;
+    }
+
+    /* --- 底部语音栏 --- */
+    .voice-bar {
+      padding: 6px 12px;
+      gap: 8px;
+    }
+
+    .btn-tts-toggle {
+      width: 32px;
+      height: 32px;
+      font-size: 0.9rem;
+    }
+
+    .voice-btn {
+      padding: 6px 14px;
+      font-size: 0.7rem;
+      border-radius: 20px;
+      min-height: 40px;
+    }
+
+    .voice-info {
+      display: none; /* 手机端藏描述文字 */
+    }
+
+    .wave-bars {
+      height: 16px;
+      gap: 2px;
+    }
+
+    /* --- 辅助类 --- */
+    .error-tip {
+      font-size: 0.68rem;
+      padding: 3px 0;
+    }
+
+    .btn-clear-chat {
+      padding: 2px 8px;
+      font-size: 0.6rem;
+    }
+  }
+
+  /* ---------- 手机横屏 / 小平板 (481px - 768px) ---------- */
+  @media (min-width: 481px) and (max-width: 768px) {
+    :global(body) {
+      overflow-y: auto;
+      height: 100dvh;
+    }
+
+    .app-container {
+      height: 100dvh;
+      margin: 0;
+      border-left: none;
+      border-right: none;
+    }
+
+    .app-header {
+      margin: 0;
+      border-radius: 0;
+    }
+
+    .header-main {
+      padding: 6px 14px;
+    }
+
+    .status-group {
+      display: none;
+    }
+
+    .perf-panel {
+      gap: 10px;
+      font-size: 0.68rem;
+    }
+
+    .main-layout {
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .panel-left {
+      width: 100%;
+      flex-shrink: 1;
+      max-height: 40vh;
+      order: 1;
+    }
+
     .panel-chat {
       order: 2;
       flex: 1;
     }
+
     .panel-right {
       order: 3;
+      width: 100%;
+      max-height: 180px;
+      overflow-y: auto;
+      border-top: 1px solid rgba(74, 110, 140, 0.2);
     }
+
+    .frame-content {
+      min-height: 160px;
+      max-height: 200px;
+    }
+
+    .bubble-content {
+      max-width: 80%;
+    }
+
+    .chat-input input {
+      height: 40px;
+    }
+
+    .btn-send {
+      height: 40px;
+    }
+
     .bottom-nav {
-      flex-wrap: wrap;
-      gap: 4px;
+      padding: 4px 12px;
     }
+
     .nav-tab {
-      flex: 1 0 auto;
-      min-width: 60px;
+      min-height: 44px;
     }
-    .status-group {
+
+    .voice-info {
+      display: inline;
+      font-size: 0.6rem;
+    }
+
+    .btn-camera-main,
+    .btn-capture,
+    .btn-identify-main,
+    .btn-retake-main {
+      min-height: 42px;
+    }
+  }
+
+  /* ---------- 平板 / 小桌面 (769px - 1024px) ---------- */
+  @media (min-width: 769px) and (max-width: 1024px) {
+    .app-container {
+      margin: 4px 6px;
+      height: calc(100vh - 8px);
+    }
+
+    .app-header {
+      margin: 4px 8px 4px;
+    }
+
+    .perf-panel {
+      gap: 10px;
+      font-size: 0.7rem;
+    }
+
+    .perf-item:nth-child(n+5) {
+      display: none; /* 平板隐藏第 5+ 性能指标 */
+    }
+
+    /* 双栏：相机 + 聊天，右栏隐藏 */
+    .main-layout {
+      flex-wrap: nowrap;
+    }
+
+    .panel-left {
+      width: 260px;
+      flex-shrink: 0;
+    }
+
+    .panel-chat {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .panel-right {
+      display: none; /* 平板默认隐藏右栏 */
+    }
+
+    .bubble-content {
+      max-width: 75%;
+    }
+
+    .bottom-nav {
+      padding: 4px 12px;
+    }
+  }
+
+  /* ---------- 桌面 (1025px+) 的微调 ---------- */
+  @media (min-width: 1025px) and (max-width: 1280px) {
+    .panel-left {
+      width: 280px;
+    }
+
+    .panel-right {
+      width: 210px;
+    }
+
+    .perf-panel {
+      gap: 10px;
+      font-size: 0.7rem;
+    }
+  }
+
+  /* ---------- 触控优化（所有设备） ---------- */
+  @media (pointer: coarse) {
+    /* 触摸设备：增大按钮可点击区域 */
+    .btn-send,
+    .btn-clear-chat,
+    .btn-lang,
+    .btn-tts-toggle,
+    .voice-btn,
+    .quick-btn,
+    .btn-learn-more,
+    .btn-retake {
+      min-height: 44px;
+    }
+
+    .nav-tab {
+      min-height: 44px;
+    }
+
+    .chat-input input {
+      min-height: 44px;
+    }
+  }
+
+  /* ---------- 高 DPI 小屏优化 ---------- */
+  @media (-webkit-min-device-pixel-ratio: 2) and (max-width: 480px) {
+    /* Retina 小屏：减小装饰元素以节省渲染 */
+    .app-container::after {
       display: none;
+    }
+
+    .frame-corner {
+      display: none;
+    }
+
+    .header-pattern-top,
+    .header-pattern-bottom {
+      height: 8px;
+    }
+  }
+
+  /* ---------- 横屏模式优化 ---------- */
+  @media (orientation: landscape) and (max-height: 500px) {
+    .app-header {
+      padding: 2px 0;
+    }
+
+    .header-main {
+      padding: 4px 14px;
+    }
+
+    .header-pattern-top,
+    .header-pattern-bottom {
+      height: 6px;
+    }
+
+    .panel-left {
+      max-height: 35vh;
+    }
+
+    .bottom-nav {
+      padding: 2px 12px;
+    }
+
+    .nav-tab {
+      padding: 4px 2px 2px;
+    }
+
+    .voice-bar {
+      padding: 4px 12px;
+    }
+
+    .frame-content {
+      min-height: 100px;
+      max-height: 130px;
     }
   }
 </style>
