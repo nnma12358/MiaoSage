@@ -2,15 +2,15 @@
 # 苗绣·识裳 — Swarm 分布式部署
 # ============================================================
 # 架构：
-#   K1 板  — Gateway (443) + YOLO (8000)
-#   PC     — ASR Whisper (8001) + TTS (8002)
+#   K1 板  — Gateway (443) + YOLO (8000) + ASR (8001)
+#   PC     — TTS (8002)
 #   Ollama — 宿主机 (11434)
 #
-# K1 启动（精简版，仅 Gateway + YOLO）：
-#   docker compose -f docker-compose.swarm.yml up -d --build gateway yolo
+# K1 启动（全量）：
+#   docker compose -f docker-compose.swarm.yml --profile k1 up -d --build
 #
-# PC 启动（ASR + TTS）：
-#   docker compose -f docker-compose.swarm.yml up -d --build pc-ai
+# PC 启动（仅 TTS）：
+#   docker compose -f docker-compose.swarm.yml --profile pc up -d --build
 #
 # ============================================================
 
@@ -44,6 +44,37 @@ services:
       options: { max-size: "20m", max-file: "3" }
 
   # ========================
+  # K1 板 — ASR 语音识别（保留在板端）
+  # ========================
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.asr
+    image: miao-sage:asr
+    container_name: miao-asr
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
+    volumes:
+      - k1-cache:/root/.cache
+      - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
+      - /usr/lib/libortextensions.so:/usr/lib/libortextensions.so:ro
+      - /usr/lib/libortextensions.so.0:/usr/lib/libortextensions.so.0:ro
+      - /usr/lib/libortextensions.so.0.12.0:/usr/lib/libortextensions.so.0.12.0:ro
+    profiles:
+      - k1
+      - all
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
   # K1 板 — API 网关
   # ========================
   gateway:
@@ -57,9 +88,9 @@ services:
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-instruct}
-      # 指向 PC 上的 ASR/TTS（修改 PC_IP 为实际 PC 地址）
+      # ASR 留在 K1 本机，TTS 指向 PC
       - YOLO_URL=http://127.0.0.1:8000
-      - ASR_URL=http://${PC_IP:-192.168.1.100}:8001
+      - ASR_URL=http://127.0.0.1:8001
       - TTS_URL=http://${PC_IP:-192.168.1.100}:8002
     volumes:
       - k1-cache:/root/.cache
@@ -68,6 +99,7 @@ services:
       - all
     depends_on:
       - yolo
+      - asr
     deploy:
       resources:
         limits:
@@ -78,46 +110,36 @@ services:
       options: { max-size: "20m", max-file: "3" }
 
   # ========================
-  # PC — ASR Whisper + TTS
+  # PC — TTS 语音合成
   # ========================
-  pc-ai:
+  tts-pc:
     build:
       context: .
       dockerfile: Dockerfile.swarm-pc
     image: miao-sage:swarm-pc
-    container_name: miao-pc-ai
+    container_name: miao-tts-pc
     restart: unless-stopped
     network_mode: host
     environment:
-      # Whisper ASR
-      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
-      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
-      - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
-      - WHISPER_LANG=${WHISPER_LANG:-zh}
-      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
-      # TTS
       - TTS_BACKEND=${TTS_BACKEND:-edge-tts}
       - TTS_VOICE=${TTS_VOICE:-zh-CN-XiaoxiaoNeural}
       - TTS_MAX_LEN=${TTS_MAX_LEN:-300}
     volumes:
-      - pc-models:/app/models
+      - pc-cache:/root/.cache
     profiles:
       - pc
       - all
     deploy:
       resources:
         limits:
-          cpus: '4.0'
-          memory: 4096M
-        reservations:
-          cpus: '1.0'
+          cpus: '2.0'
           memory: 1024M
     logging:
       driver: json-file
-      options: { max-size: "50m", max-file: "3" }
+      options: { max-size: "20m", max-file: "3" }
 
 volumes:
   k1-cache:
     name: miao-k1-cache
-  pc-models:
-    name: miao-pc-models
+  pc-cache:
+    name: miao-pc-cache
