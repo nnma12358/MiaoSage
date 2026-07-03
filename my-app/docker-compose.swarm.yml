@@ -1,0 +1,123 @@
+# ============================================================
+# 苗绣·识裳 — Swarm 分布式部署
+# ============================================================
+# 架构：
+#   K1 板  — Gateway (443) + YOLO (8000)
+#   PC     — ASR Whisper (8001) + TTS (8002)
+#   Ollama — 宿主机 (11434)
+#
+# K1 启动（精简版，仅 Gateway + YOLO）：
+#   docker compose -f docker-compose.swarm.yml up -d --build gateway yolo
+#
+# PC 启动（ASR + TTS）：
+#   docker compose -f docker-compose.swarm.yml up -d --build pc-ai
+#
+# ============================================================
+
+services:
+  # ========================
+  # K1 板 — YOLO 检测
+  # ========================
+  yolo:
+    build:
+      context: .
+      dockerfile: Dockerfile.yolo
+    image: miao-sage:yolo
+    container_name: miao-yolo
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - YOLO_MODEL=${YOLO_MODEL:-yolov8n.onnx}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+    volumes:
+      - k1-cache:/root/.cache
+    profiles:
+      - k1
+      - all
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 1536M
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # K1 板 — API 网关
+  # ========================
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.k1
+    image: miao-sage:gateway
+    container_name: miao-gateway
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-instruct}
+      # 指向 PC 上的 ASR/TTS（修改 PC_IP 为实际 PC 地址）
+      - YOLO_URL=http://127.0.0.1:8000
+      - ASR_URL=http://${PC_IP:-192.168.1.100}:8001
+      - TTS_URL=http://${PC_IP:-192.168.1.100}:8002
+    volumes:
+      - k1-cache:/root/.cache
+    profiles:
+      - k1
+      - all
+    depends_on:
+      - yolo
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 512M
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # PC — ASR Whisper + TTS
+  # ========================
+  pc-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.swarm-pc
+    image: miao-sage:swarm-pc
+    container_name: miao-pc-ai
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Whisper ASR
+      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE=${WHISPER_COMPUTE:-int8}
+      - WHISPER_LANG=${WHISPER_LANG:-zh}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      # TTS
+      - TTS_BACKEND=${TTS_BACKEND:-edge-tts}
+      - TTS_VOICE=${TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+      - TTS_MAX_LEN=${TTS_MAX_LEN:-300}
+    volumes:
+      - pc-models:/app/models
+    profiles:
+      - pc
+      - all
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 4096M
+        reservations:
+          cpus: '1.0'
+          memory: 1024M
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+
+volumes:
+  k1-cache:
+    name: miao-k1-cache
+  pc-models:
+    name: miao-pc-models

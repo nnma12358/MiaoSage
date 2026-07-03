@@ -36,8 +36,8 @@ class TTSEngine:
 
         logger.info(f"TTS 合成开始 (len={len(text)}): {text[:50]}...")
 
-        # 截断过长文本，避免 ONNX 推理 OOM
-        max_len = 200
+        # 截断过长文本，避免 ONNX 推理超时（K1 每句解码 ~24s）
+        max_len = 100
         if len(text) > max_len:
             logger.warning(f"文本过长 ({len(text)} → {max_len})，已截断")
             text = text[:max_len]
