@@ -3,8 +3,9 @@
   import { onMount, onDestroy } from 'svelte';
 
   // --- 状态变量 ---
- let isListening = $state(false);           
-let cameraStream = null;           // 流对象不需要响应式，保持普通变量
+ let isListening = $state(false);
+let isMobile = false;              // 设备检测
+let cameraStream = null;
 let videoElement = $state(undefined);  // 需要响应式，以便 $effect 追踪 DOM 绑定
 let canvasElement;                 
 let cameraActive = $state(false);          
@@ -314,8 +315,14 @@ let micStream = null;                // 录音媒体流
     }
   };
 
+  // --- 设备检测 ---
+  function detectDevice() {
+    isMobile = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) && window.innerWidth < 1024;
+  }
+
   // --- 摄像头操作 ---
-  let pendingStream = $state(null);  // 暂存待绑定的媒体流
+  let pendingStream = $state(null);
+  let fileInput;  // 手机端隐藏 <input type=file>
 
   // 响应式副作用：当 cameraActive 变为 true 且 videoElement 就绪后，自动绑定流
   $effect(() => {
@@ -326,6 +333,7 @@ let micStream = null;                // 录音媒体流
   });
 
   async function openCamera() {
+    if (isMobile) { fileInput?.click(); return; }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 640, height: 480, facingMode: 'environment' } 
@@ -344,6 +352,7 @@ let micStream = null;                // 录音媒体流
   }
 
   function closeCamera() {
+    if (isMobile) { cameraActive = false; return; }
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       cameraStream = null;
@@ -362,6 +371,20 @@ let micStream = null;                // 录音媒体流
     capturedImage = canvasElement.toDataURL('image/jpeg', 0.9);
     // 截取后自动关闭摄像头以节省资源（可选）
     closeCamera();
+  }
+
+  // 手机端：读取原生相机拍摄的照片
+  function handleFilePicked(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      capturedImage = e.target.result;
+      cameraActive = false;
+      detectedPatterns = [];
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
   }
 
   // --- Canvas 叠加层绘制 YOLO 识别框 ---
@@ -570,11 +593,8 @@ let micStream = null;                // 录音媒体流
 
   // --- 重新拍摄 ---
   function retakePhoto() {
-    capturedImage = null;
-    identificationResult = null;
-    recognitionFailed = false;
-    recognitionDone = false;
-    detectedPatterns = [];
+    capturedImage = null; identificationResult = null;
+    recognitionFailed = false; recognitionDone = false; detectedPatterns = [];
     openCamera();
   }
 
@@ -959,6 +979,7 @@ let micStream = null;                // 录音媒体流
 
   // --- 生命周期 ---
   onMount(() => {
+    detectDevice();
     startFpsMonitor();
     startCpuMonitor();
     checkMicPermission();  // 真实检测麦克风权限
@@ -1189,6 +1210,10 @@ let micStream = null;                // 录音媒体流
         </div>
       </div>
 
+      {#if isMobile}
+        <input type="file" accept="image/*" capture="environment" class="hidden-file-input" bind:this={fileInput} onchange={handleFilePicked} />
+      {/if}
+
       <!-- 操作按钮组 -->
       <div class="camera-actions">
         {#if !cameraActive && !capturedImage}
@@ -1196,7 +1221,7 @@ let micStream = null;                // 录音媒体流
             <svg viewBox="0 0 24 24" width="20" height="20"><rect x="2" y="6" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 4 L8.5 2 L15.5 2 L17 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             {t.identifyBtn[lang]}
           </button>
-        {:else if cameraActive}
+        {:else if !isMobile && cameraActive}
           <button class="btn-capture" onclick={captureFrame}>
             <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg>
             {t.captureBtn[lang]}
@@ -2203,10 +2228,8 @@ let micStream = null;                // 录音媒体流
 
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .hidden-canvas {
-    display: none;
-  }
-
+  .hidden-canvas { display: none; }
+  .hidden-file-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
   .hidden-audio {
     position: absolute;
     left: -9999px;
