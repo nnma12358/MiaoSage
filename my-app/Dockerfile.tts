@@ -37,9 +37,12 @@ RUN pip install --break-system-packages --no-cache-dir \
 
 # 3. transformers + tokenizers（仅从 spacemit 源装预编译轮子，手动补齐传递依赖）
 #    注意: huggingface-hub 必须 <1.0 否则与 spacemit 源的 transformers 5.x 不兼容
+#    requests 从标准 PyPI 安装（spacemit 源不含）
 RUN pip install --break-system-packages --no-cache-dir \
+    requests && \
+    pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-    requests tokenizers "huggingface-hub<1.0" safetensors && \
+    tokenizers "huggingface-hub<1.0" safetensors && \
     pip install --break-system-packages --no-cache-dir \
     --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
     --no-deps transformers && \
