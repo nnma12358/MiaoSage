@@ -1328,10 +1328,11 @@ let micStream = null;                // 录音媒体流
       {/if}
       
       <canvas bind:this={canvasElement} class="hidden-canvas"></canvas>
-      <!-- 隐藏音频元素：TTS 语音播报 -->
-      <audio bind:this={audioElement} class="hidden-audio" preload="none"></audio>
     </aside>
     {/if}
+
+    <!-- 隐藏音频元素：TTS 语音播报（手机/桌面通用） -->
+    <audio bind:this={audioElement} class="hidden-audio" preload="none"></audio>
 
     <!-- 中栏：对话区 -->
     <section class="panel panel-chat">
