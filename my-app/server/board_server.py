@@ -76,7 +76,7 @@ if not STATIC_DIR.exists():
 CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "clothesfp16.onnx")
 SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "best_fp16.onnx")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-instruct")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "miao-qwen-v3")
 
 # ---------- K1 平台检测与优化 ----------
 _ARCH = os.uname().machine
@@ -108,12 +108,9 @@ def _resolve_model(filename: str) -> str:
     logger.warning(f"模型 {filename} 未找到，请确保模型文件存在于上述路径之一")
     return filename  # 返回原始路径，由 YOLODetector 自行兜底
 
-# ---------- 苗族系统提示 ----------
-SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
-你精通苗族银饰、刺绣（苗绣）、蜡染、百鸟衣、
-银角头饰、银项圈、绣花围腰等传统服饰知识。
-请用亲切专业的口吻，适当引用苗族传说、历史、
-习俗回答用户问题。字数控制在200-500字。"""
+# 不再硬编码 system prompt — 由 Modelfile 统一管理
+# 如需覆盖，设置环境变量 OLLAMA_SYSTEM_PROMPT=你的提示词
+_SYSTEM_PROMPT = os.environ.get("OLLAMA_SYSTEM_PROMPT", None)
 
 # ============================================================
 # YOLO 检测器（三后端自适应：onnxruntime → onnx-numpy → ultralytics）
@@ -626,14 +623,16 @@ async def chat_proxy(request: Request):
     if not messages:
         raise HTTPException(status_code=400, detail="消息为空")
 
-    # 注入系统提示
-    ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    # 注入系统提示（仅在设置了环境变量时）
+    ollama_messages = []
+    if _SYSTEM_PROMPT:
+        ollama_messages.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_messages += messages
 
     payload = {
         "model": OLLAMA_MODEL,
         "messages": ollama_messages,
         "stream": False,
-        "options": {"temperature": 0.7, "top_p": 0.9},
     }
 
     llm_guard.enter()
@@ -674,13 +673,15 @@ async def chat_stream(request: Request):
         raise HTTPException(status_code=400, detail="无效 JSON")
 
     messages = body.get("messages", [])
-    ollama_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+    ollama_messages_stream = []
+    if _SYSTEM_PROMPT:
+        ollama_messages_stream.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_messages_stream += messages
 
     payload = {
         "model": OLLAMA_MODEL,
-        "messages": ollama_messages,
+        "messages": ollama_messages_stream,
         "stream": True,
-        "options": {"temperature": 0.7, "top_p": 0.9},
     }
 
     async def generate():
@@ -849,11 +850,10 @@ async def voice_chat(audio: UploadFile = File(...)):
     payload = {
         "model": OLLAMA_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            *([{"role": "system", "content": _SYSTEM_PROMPT}] if _SYSTEM_PROMPT else []),
             {"role": "user", "content": user_text},
         ],
         "stream": False,
-        "options": {"temperature": 0.7, "top_p": 0.9},
     }
     try:
         resp = http_requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=120)

@@ -29,7 +29,7 @@ if not STATIC_DIR.exists():
     STATIC_DIR = Path(__file__).resolve().parent / "build"
 
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-instruct")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "miao-qwen-v3")
 
 # 后端微服务地址（host 网络模式下用 localhost）
 YOLO_URL = os.environ.get("YOLO_URL", "http://127.0.0.1:8000")
@@ -38,11 +38,9 @@ TTS_URL  = os.environ.get("TTS_URL",  "http://127.0.0.1:8002")
 
 _ARCH = os.uname().machine
 
-SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
-你精通苗族银饰、刺绣（苗绣）、蜡染、百鸟衣、
-银角头饰、银项圈、绣花围腰等传统服饰知识。
-请用亲切专业的口吻，适当引用苗族传说、历史、
-习俗回答用户问题。字数控制在200-500字。"""
+# 不再注入 system prompt — 由 Modelfile 的 SYSTEM 指令统一管理
+# 如需覆盖，设置环境变量 OLLAMA_SYSTEM_PROMPT
+_SYSTEM_PROMPT = os.environ.get("OLLAMA_SYSTEM_PROMPT", None)
 
 # ---- 性能监控（复用 perf.py 模块）----
 import time
@@ -227,9 +225,11 @@ async def chat(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     messages = body.get("messages", [])
-    ollama_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": False,
-               "options": {"temperature": 0.7, "top_p": 0.9}}
+    ollama_msgs = []
+    if _SYSTEM_PROMPT:
+        ollama_msgs.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_msgs += messages
+    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": False}
     llm_guard.enter()
     t0 = time.perf_counter()
     try:
@@ -259,9 +259,11 @@ async def chat_stream(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     messages = body.get("messages", [])
-    ollama_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": True,
-               "options": {"temperature": 0.7, "top_p": 0.9}}
+    ollama_msgs_chat = []
+    if _SYSTEM_PROMPT:
+        ollama_msgs_chat.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_msgs_chat += messages
+    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs_chat, "stream": True}
 
     async def generate():
         yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
