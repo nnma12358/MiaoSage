@@ -35,8 +35,8 @@
 | 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
 | 🗣️ **语音合成** | MeloTTS | 文字 → 自然语音 · 中文多音色 |
-| 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 |
-| 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · 端侧运行 |
+| 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 · Modelfile 防幻觉优化 |
+| 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · Modelfile 端侧部署 |
 
 > 💡 **双模式部署**：Docker 多容器（8GB 内存）或单进程静态部署（2GB 即可），灵活适配不同硬件条件
 
@@ -139,9 +139,11 @@ miao-sage/
         │   ├── model.safetensors
         │   ├── config.json
         │   └── tokenizer.json
-        ├── models/                   # GGUF 量化模型
+        ├── models/                   # GGUF 量化模型 + Ollama 部署
         │   ├── miao_qwen_0.5b_f16.gguf
-        │   └── miao_qwen_0.5b_q4km.gguf
+        │   ├── miao_qwen_0.5b_q4km.gguf
+        │   ├── Modelfile              # Ollama 模型配置（防幻觉优化）
+        │   └── README_OLLAMA.md       # Ollama 部署指南
         └── unsloth_compiled_cache/   # Unsloth 编译缓存
 ```
 
@@ -233,6 +235,7 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 |:--:|------|
 | 📖 | [应用详细文档](my-app/README.md) |
 | 🐳 | [Docker 部署脚本](my-app/deploy/deploy-k1-docker-only.sh) |
+| 🧠 | [Ollama 模型部署指南](LLM/train-qwen2.5%200.5b/models/README_OLLAMA.md) |
 | 📦 | [GitHub 仓库](https://github.com/nnma12358/MiaoSage) |
 
 ---
