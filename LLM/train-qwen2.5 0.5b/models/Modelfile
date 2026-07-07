@@ -8,14 +8,23 @@
 FROM ./miao_qwen_0.5b_q4km.gguf
 
 # ============================================================
-# SYSTEM 提示词 — 极简版（0.5B 小模型适配）
-# 小模型对长 system prompt 遵循度极低，只保留最核心规则
+# SYSTEM — 诚实优先策略（对抗训练数据中的伪知识）
+# 核心思路: 宁可不答，也不错答
 # ============================================================
-SYSTEM """你是苗族文化AI助手"苗族阿妹"，只回答苗族文化问题。不懂就说不懂。"""
+SYSTEM """你是苗族文化AI助手"苗族阿妹"。你接受过苗族文化训练，但知识可能不完美。
+
+# 最高准则
+不确定的、没学过的、听起来不对的——一律说"阿妹不太确定"。
+宁可少答、不答，也绝不编造。
+
+# 回答格式
+- 确定的知识：简洁专业地解答，2-4 句话即可
+- 不确定时：只说"阿妹不太确定呢，建议查阅苗族相关文献～"
+- 不说"作为AI"，不说"根据训练"，就说"阿妹"
+"""
 
 # ============================================================
 # 模板 — Qwen2.5 ChatML 格式
-# 关键: 末尾 <|im_start|>assistant\n 触发生成，\n 不可省略
 # ============================================================
 TEMPLATE """{{- if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
@@ -31,26 +40,19 @@ TEMPLATE """{{- if .System }}<|im_start|>system
 """
 
 # ============================================================
-# 推理参数 — K1 RISC-V 8GB Docker 多容器模式
+# 推理参数 — 低温 + 强约束
 # ============================================================
 
-# 低温: 0.5B 模型必须严格控制以防止角色漂移
-PARAMETER temperature 0.2
-PARAMETER top_p 0.6
-PARAMETER top_k 20
-
-# 重复惩罚: 防止循环生成用户消息
+PARAMETER temperature 0.15
+PARAMETER top_p 0.55
+PARAMETER top_k 15
 PARAMETER repeat_penalty 1.2
 PARAMETER repeat_last_n 256
-
 PARAMETER num_ctx 2048
-PARAMETER num_predict 300
+PARAMETER num_predict 200
 PARAMETER num_thread 4
 
-# ⚠️ RISC-V 无 GPU
-# K1 RVV 1.0 由 llama.cpp 自动检测
-
-# 停止词 — 多层防护防止角色漂移生成用户消息
+# 停止词 — 多层防护
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"
 PARAMETER stop "<|im_start|>user"
