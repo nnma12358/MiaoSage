@@ -76,7 +76,45 @@ if not STATIC_DIR.exists():
 CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "clothesfp16.onnx")
 SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "best_fp16.onnx")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "miao-qwen-v3")
+
+# ---- Ollama 模型自动发现 ----
+# 优先级: 环境变量 OLLAMA_MODEL > 自动搜索 miao* 模型 > 自动搜索 qwen* 模型 > 第一个可用模型 > 兜底
+def _discover_ollama_model(host: str) -> str:
+    """从 Ollama 自动发现可用的苗族文化模型"""
+    # 1) 环境变量显式覆盖
+    env_model = os.environ.get("OLLAMA_MODEL", "").strip()
+    if env_model:
+        logger.info(f"Ollama 模型: {env_model} (环境变量)")
+        return env_model
+
+    # 2) 查询 Ollama 已注册模型
+    try:
+        r = http_requests.get(f"{host}/api/tags", timeout=5)
+        if r.status_code != 200:
+            raise ConnectionError(f"HTTP {r.status_code}")
+        models = [m["name"] for m in r.json().get("models", [])]
+        if not models:
+            raise ValueError("无已注册模型")
+    except Exception as e:
+        logger.warning(f"无法查询 Ollama 模型列表: {e}")
+        return "miao-qwen"  # 兜底
+
+    # 3) 按优先级匹配: miao* > qwen* > 首个
+    for keyword in ("miao", "qwen"):
+        matching = [m for m in models if keyword in m.lower()]
+        if matching:
+            # 优先选不含 :latest 标签的（更可能是自定义模型）
+            custom = [m for m in matching if ":latest" not in m]
+            selected = (custom or matching)[0]
+            logger.info(f"Ollama 模型: {selected} (自动发现, 匹配 '{keyword}')")
+            return selected
+
+    # 4) 第一个可用模型
+    selected = models[0]
+    logger.info(f"Ollama 模型: {selected} (自动发现, 首个可用)")
+    return selected
+
+OLLAMA_MODEL = _discover_ollama_model(OLLAMA_HOST)
 
 # ---------- K1 平台检测与优化 ----------
 _ARCH = os.uname().machine
