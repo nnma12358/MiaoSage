@@ -33,7 +33,8 @@ RUN mkdir -p /app/certs && \
         -subj "/CN=K1-MiaoXiu"
 
 ENV OLLAMA_HOST=http://127.0.0.1:11434
-ENV OLLAMA_MODEL=qwen2.5-instruct
+# 不硬编码模型名 — 由 docker-compose 或 Ollama 自动发现决定
+# ENV OLLAMA_MODEL 由 compose 环境变量注入
 ENV YOLO_URL=http://127.0.0.1:8000
 ENV ASR_URL=http://127.0.0.1:8001
 ENV TTS_URL=http://127.0.0.1:8002

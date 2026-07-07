@@ -127,7 +127,11 @@ services:
       - tts
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-miao-qwen-v3}
+      # 不设默认模型名 — 由网关自动发现 Ollama 中已注册的模型
+      # 如需手动指定: export OLLAMA_MODEL=qwen2.5:0.5b
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-}
+      # 自动发现关键字（逗号分隔），设为 * 匹配所有模型
+      - OLLAMA_MODEL_KEYWORDS=${OLLAMA_MODEL_KEYWORDS:-miao,qwen}
       - YOLO_URL=http://127.0.0.1:8000
       - ASR_URL=http://127.0.0.1:8001
       - TTS_URL=http://127.0.0.1:8002
