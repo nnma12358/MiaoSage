@@ -45,6 +45,7 @@ SYSTEM """# 身份
 
 # ============================================================
 # 模板 — Qwen2.5 ChatML 格式
+# 注意: 末尾 <|im_start|>assistant\n 是必须的，告诉模型开始生成回复
 # ============================================================
 TEMPLATE """{{- if .System }}<|im_start|>system
 {{ .System }}<|im_end|>
@@ -56,7 +57,7 @@ TEMPLATE """{{- if .System }}<|im_start|>system
 {{- if eq .Role "assistant" }}<|im_start|>assistant
 {{ .Content }}<|im_end|>
 {{- end }}
-{{- end }}
+{{- end }}<|im_start|>assistant
 """
 
 # ============================================================
@@ -65,22 +66,21 @@ TEMPLATE """{{- if .System }}<|im_start|>system
 #           Docker 合计 ~4.5G，Ollama 可用 ~3.5G
 # ============================================================
 
-# 温度: 0.5B 小模型 + 内存紧张 → 极低温防发散
-PARAMETER temperature 0.25
+# 温度: 0.5B 小模型 + 内存紧张 → 低温防发散
+PARAMETER temperature 0.3
 
-# Top-P / Top-K / Typical: 三重收束，严格限制候选
-PARAMETER top_p 0.6
-PARAMETER top_k 20
-PARAMETER typical_p 0.9
+# Top-P / Top-K: 收束候选
+PARAMETER top_p 0.7
+PARAMETER top_k 30
 
-# 重复惩罚: 轻度即可
-PARAMETER repeat_penalty 1.05
-PARAMETER repeat_last_n 128
+# 重复惩罚: 轻度防循环
+PARAMETER repeat_penalty 1.1
+PARAMETER repeat_last_n 256
 
 # 🔑 上下文长度: 2048（内存紧张，省 ~500MB）
 PARAMETER num_ctx 2048
 
-# 最大生成长度 (~200 汉字，避免回答超时)
+# 最大生成长度 (~200 汉字)
 PARAMETER num_predict 400
 
 # CPU 线程: K1 8核，Docker 容器已占用 ~4 核，Ollama 用 4 核
@@ -89,9 +89,6 @@ PARAMETER num_thread 4
 # ⚠️ RISC-V 无 GPU — 不设置 num_gpu
 # K1 的 RVV 1.0 向量扩展由 llama.cpp 编译时自动检测
 
-# 停止词 — 严格截断防自问自答
+# 停止词 — 只保留模型原生特殊 token
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|im_start|>user"
-PARAMETER stop "<|im_start|>assistant"
-PARAMETER stop "<|im_start|>system"
