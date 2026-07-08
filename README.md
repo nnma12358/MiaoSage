@@ -35,8 +35,9 @@
 | 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
 | 🗣️ **语音合成** | MeloTTS | 文字 → 自然语音 · 中文多音色 |
-| 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 · Modelfile 防幻觉优化 |
-| 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · Modelfile 端侧部署 |
+| 🧠 **智能对话** | Qwen2.5-0.5B LoRA | 苗族文化专家问答 · Ollama 部署 · Modelfile 防幻觉优化 · K1 推理极致优化 |
+| 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF Q4_K_M 量化 · Modelfile 端侧部署 |
+| 🔍 **模型自动发现** | Ollama API | 懒加载 + 60s 缓存 · 关键字匹配 (miao/qwen/...) · 环境变量灵活覆盖 |
 
 > 💡 **双模式部署**：Docker 多容器（8GB 内存）或单进程静态部署（2GB 即可），灵活适配不同硬件条件
 
@@ -159,6 +160,8 @@ bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 ```
 
 > 四容器各司其职（YOLO / ASR / TTS / Gateway），易于维护和独立扩缩容。
+> 支持 `OLLAMA_MODEL` 环境变量指定模型，或自动从 Ollama 发现已注册模型。
+> 新增 `/ollama/models` 查看可用模型、`/ollama/refresh` 热刷新模型列表。
 
 ### 📦 方式二：静态单进程（轻量 · 2GB 内存可用）
 
@@ -188,17 +191,55 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 ┌────────────────────▼─────────────────────────────┐
 │           🚪 Gateway (443 HTTPS)                  │
 │        SPA 前端分发  +  API 路由代理               │
+│  /health · /stats · /ollama/models · /ollama/refresh │
 └──┬────────────┬────────────┬─────────────────────┘
    │            │            │
-   ▼            ▼            ▼              ┌──────────────┐
-┌──────┐  ┌──────────┐  ┌─────────┐        │  🧠 Ollama    │
-│👁️YOLO│  │ 👂 ASR   │  │ 🗣️ TTS │        │  :11434       │
-│双模型 │  │ :8001    │  │ :8002   │        │ Qwen2.5-Inst. │
-│:8000 │  └──────────┘  └─────────┘        └──────────────┘
-│silver│
+   ▼            ▼            ▼              ┌──────────────────┐
+┌──────┐  ┌──────────┐  ┌─────────┐        │  🧠 Ollama        │
+│👁️YOLO│  │ 👂 ASR   │  │ 🗣️ TTS │        │  :11434           │
+│双模型 │  │ :8001    │  │ :8002   │        │ 自动发现模型      │
+│:8000 │  └──────────┘  └─────────┘        │ miao-qwen / qwen* │
+│silver│                                    └──────────────────┘
 │+cloth│
 └──────┘
 ```
+
+---
+
+## 🎛️ 模型配置
+
+### 自动发现
+
+网关启动时自动查询 Ollama 已注册模型，按关键字优先级匹配：
+
+```
+OLLAMA_MODEL 环境变量  →  关键字匹配(miao > qwen > ...)  →  首个可用模型  →  兜底
+```
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `OLLAMA_MODEL` | 显式指定模型名（跳过自动发现） | 空 |
+| `OLLAMA_MODEL_KEYWORDS` | 自动发现关键字（逗号分隔） | `miao,qwen` |
+| `OLLAMA_HOST` | Ollama 服务地址 | `http://127.0.0.1:11434` |
+
+```bash
+# 查看当前活跃模型
+curl -k https://127.0.0.1:443/ollama/models
+
+# 切换模型后刷新
+curl -k -X POST https://127.0.0.1:443/ollama/refresh
+```
+
+### K1 推理极速优化
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `num_ctx` | 512 | 上下文窗口，CPU 推理每减 256 token 提速 ~30% |
+| `num_predict` | 150 | 最大输出 token，短问答够用 |
+| `num_thread` | 2 | K1 4 核留 2 核给 OS + Docker |
+| `temperature` | 0.6 | 0.5B 小模型需更高随机性防死循环 |
+| `repeat_penalty` | 1.25 | 增强重复惩罚，打断 token 重复 |
+| `top_k / top_p` | 50 / 0.85 | 核采样放宽，增加输出多样性 |
 
 ---
 
