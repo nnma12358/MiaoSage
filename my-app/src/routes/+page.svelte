@@ -1,5 +1,6 @@
 ﻿<script>
-  import { fade, slide, fly } from 'svelte/transition';
+  import { fade, slide, fly, scale } from 'svelte/transition';
+  import { quintOut, elasticOut } from 'svelte/easing';
   import { onMount, onDestroy } from 'svelte';
 
   // --- 状态变量 ---
@@ -29,6 +30,8 @@ let audioElement;                    // TTS 播放 <audio> 绑定
 let audioUnlocked = false;           // 浏览器音频策略解锁标记
 let ttsEnabled = $state(true);       // TTS 语音播报开关
 let micStream = null;                // 录音媒体流
+let showQRCode = $state(false);      // 二维码弹窗
+let qrCodeDataUrl = $state('');      // 二维码 DataURL
 
   // --- 语言切换 ---
   let lang = $state('zh');  // 'zh' | 'en'
@@ -139,6 +142,27 @@ let micStream = null;                // 录音媒体流
   };
   function toggleLang() { lang = lang === 'zh' ? 'en' : 'zh'; }
 
+  // --- 二维码生成与切换 ---
+  function toggleQRCode() {
+    showQRCode = !showQRCode;
+    if (showQRCode && !qrCodeDataUrl) {
+      generateQRCode();
+    }
+  }
+  function generateQRCode() {
+    // 使用免费 QR 码 API 生成，无需外部依赖
+    const currentUrl = window.location.origin + window.location.pathname;
+    const apiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(currentUrl)}&bgcolor=0f1d2e&color=5ecfd1&margin=10`;
+    // 直接设置 API URL（浏览器自动加载图片）
+    qrCodeDataUrl = apiUrl;
+  }
+  function closeQRModal(e) {
+    // 点击遮罩关闭
+    if (e.target === e.currentTarget) {
+      showQRCode = false;
+    }
+  }
+
   // --- 设备状态 ---
   let camOnline = $state(true);
   let micOnline = $state(true);
@@ -211,14 +235,21 @@ let micStream = null;                // 录音媒体流
   const LLM_API_URL = '/chat';           // Qwen2.5-Instruct 对话 API
   const LLM_STREAM_URL = '/chat/stream';  // 流式对话（可选）
   
-  // YOLO 通用类别名 → 苗族服饰知识库映射（用于 COCO 预训练模型的检测结果翻译）
-  // 实际项目中应使用自定义训练的苗族服饰 YOLO 模型
+  // YOLO 自定义模型类别名 → 中文展示名
+  // 覆盖 clothes.yaml (2类) + dataset.yaml (8类) 共 10 个苗绣/银饰类别
   const yoloLabelMap = {
-    'hat': '苗族银角头饰 Miao Silver Horn',
-    'tie': '苗族银项圈 Miao Silver Collar',
-    'backpack': '苗族百鸟衣 Miao Bird Coat',
-    'apron': '苗族绣花围腰 Miao Embroidered Apron',
-    // 可扩展更多映射 more mappings can be added
+    // ===== clothes.yaml：苗族服装大类 =====
+    '苗族便装': '苗族便装',
+    '苗族盛装': '苗族盛装',
+    // ===== dataset.yaml：苗族银饰细类 =====
+    'tassel_hat':                    '苗族流苏帽',
+    'miao_ox_horn_silver_headwear':  '苗族银角头饰',
+    'miao_silver_hairpin':           '苗族银发簪',
+    'miao_silver_crown':             '苗族银冠',
+    'miao_silver_chest_ornament':    '苗族银胸牌',
+    'miao_silver_lock':              '苗族银锁',
+    'miao_silver_necklace':          '苗族银项链',
+    'silver_headdress':              '银质头饰',
   };
 
   // 将 base64 Data URL 转为 Blob（用于 FormData 上传）
@@ -233,8 +264,34 @@ let micStream = null;                // 录音媒体流
     return new Blob([buffer], { type: mime });
   }
 
-  // --- 苗族服饰知识库（仅展示用，真实场景由 Qwen2.5-Instruct 生成） ---
+  // --- 苗族服饰知识库（覆盖自定义 YOLO 模型全部 10 类 + 3 类文化兜底） ---
   const miaoKnowledge = {
+    // ==================== clothes.yaml 服装大类 ====================
+    '苗族便装': {
+      type: '苗族便装 Miao Casual Wear',
+      confidence: 95.8,
+      color: '靛蓝/黑色为底，袖口领口缀以彩色绣片 Indigo/black base, embroidered patches at cuffs and collar',
+      pattern: '几何回纹、菱形纹、八角花纹 Geometric fret, diamond, octagonal flower',
+      meaning: '苗族便装是苗族人民日常生活劳作的主要服饰。衣身简洁适体，在领口、袖口、衣襟等关键部位缀以精美绣片，体现苗族"简中有繁"的审美哲学。便装上的几何纹样多取材于自然山川与农耕生活。\n\nMiao casual wear is the primary attire for daily life and labor. The silhouette is clean and practical, yet adorned with exquisite embroidery at key areas — embodying the Miao aesthetic of "complexity within simplicity."',
+      custom: '不同苗族支系的便装在色彩偏好上各有特色：黔东南以红绿绣片为主，黔西北多见素雅黑白色调。\n\nDifferent Miao subgroups have distinct preferences: southeastern Guizhou favors red-green patches, while northwestern Guizhou leans toward austere black-and-white.',
+    },
+    '苗族盛装': {
+      type: '苗族盛装 Miao Ceremonial Attire',
+      confidence: 96.3,
+      color: '黑底满绣，银光璀璨，辅以红、金、绿 Black base fully embroidered, silver accents with red, gold, green',
+      pattern: '蝴蝶妈妈纹、龙纹、百鸟纹、铜鼓纹、涡旋纹 Butterfly Mother, dragon, hundred-bird, bronze drum, spiral',
+      meaning: '苗族盛装是苗族最隆重的礼仪服饰，只在鼓藏节、苗年、婚礼等重大场合穿戴。整套盛装重达十余斤，绣满苗族创世史诗中的图腾符号：蝴蝶妈妈象征万物起源，龙纹代表权威守护，涡旋纹铭刻祖先跨越的江河。\n\nMiao ceremonial attire is worn only at major occasions. Weighing over 10 jin, it is covered with totemic symbols from the Miao creation epic.',
+      custom: '一套完整的苗族盛装需要母女相传数十年积累，银饰由银匠纯手工打制，绣片需多位绣娘花费数年完成，是名副其实的"穿在身上的史诗"。\n\nA complete set is passed down mother-to-daughter over decades — truly an "epic worn on the body."',
+    },
+    // ==================== dataset.yaml 银饰细类 ====================
+    '苗族流苏帽': {
+      type: '苗族流苏帽 Miao Tassel Hat',
+      confidence: 94.5,
+      color: '黑色绒布底，银色流苏垂坠，间以彩色珠串 Black velvet base, silver tassels with colored beads',
+      pattern: '垂珠纹、星芒纹、如意纹 Beaded fringe, starburst, ruyi patterns',
+      meaning: '流苏帽是苗族青年女子日常佩戴的头饰。帽顶缀有银质流苏，行走时银丝摇曳、光影流动，寓意"流光溢彩、青春永驻"。星芒纹象征太阳光辉，如意纹寄托生活顺遂的美好祝愿。\n\nThe tassel hat is a daily headpiece for young Miao women. Silver tassels sway with each step, creating a play of light and shadow — symbolizing "eternal radiance and youth."',
+      custom: '流苏帽在不同苗族支系中形态各异：西江苗寨的流苏帽较矮圆，缀以红绿珠串；台江地区的则高耸挺拔，银流苏更长更密。\n\nStyles vary: Xijiang\'s are shorter and rounder, while Taijiang\'s are taller with denser silver tassels.',
+    },
     '苗族银角头饰': {
       type: '苗族银角头饰 Miao Silver Horn Headdress',
       confidence: 98.2,
@@ -243,6 +300,55 @@ let micStream = null;                // 录音媒体流
       meaning: '银角是苗族最重要的头饰之一，源于蚩尤部落的牛图腾崇拜。牛角象征力量与祖先庇护，银角上錾刻的太阳芒纹寓意生命轮回，涡旋纹则记录着苗族先民跨越江河的迁徙史诗。\n\nThe silver horn is a paramount Miao headdress, rooted in the ox totem worship of the Chiyou tribe. Horns symbolize strength and ancestral protection; sun-ray engravings signify the cycle of life; spiral motifs chronicle the epic migration of Miao ancestors across rivers.',
       custom: '每逢“鼓藏节”，苗族姑娘佩戴全套银角、银冠、银项圈，重达十余斤，行走时银铃作响，被认为可以驱邪纳福。\n\nDuring the Guzang Festival, Miao girls don full silver sets weighing 5+ kg — the tinkling of silver bells is believed to ward off evil and bring blessings.',
     },
+    '苗族银发簪': {
+      type: '苗族银发簪 Miao Silver Hairpin',
+      confidence: 93.7,
+      color: '纯银本色，间或有鎏金点缀 Pure silver, occasionally gilt-accented',
+      pattern: '花鸟纹、凤穿牡丹纹、如意云头纹 Flower-bird, phoenix-through-peony, ruyi cloud',
+      meaning: '银发簪是苗族女子绾发定情的信物。簪首常雕刻凤凰或蝴蝶——凤凰象征高贵与吉祥，蝴蝶代表苗族创世神话中的"蝴蝶妈妈"。发簪不仅固定发髻，更是女子成年与婚姻状况的标识：未婚女子簪头朝左，已婚朝右。\n\nSilver hairpins serve as love tokens for Miao women. The pinhead features a phoenix (nobility) or butterfly (the Butterfly Mother myth). The pin also indicates marital status: unmarried women wear the pinhead left, married right.',
+      custom: '苗族银发簪的制作讲究"一寸银丝一寸心"，银匠需将粗银条反复捶打拉丝至细如发丝，再盘绕成花，一支精美发簪往往需耗费数日心血。\n\nCrafting follows "every inch of silver thread equals an inch of heart" — requiring days of work to hammer silver into hair-thin wires and coil them into floral shapes.',
+    },
+    '苗族银冠': {
+      type: '苗族银冠 Miao Silver Crown',
+      confidence: 96.0,
+      color: '银白璀璨，缀以红蓝宝石 Bright silver with ruby and sapphire accents',
+      pattern: '二龙戏珠、百鸟朝凤、缠枝花卉 Twin dragons, hundred birds, twining floral scrolls',
+      meaning: '银冠是苗族女子盛装中最高等级的头饰，通常由寨中德高望重的老银匠为新娘量身定做。冠顶的二龙戏珠纹象征天地交泰、阴阳和谐；百鸟朝凤代表家族兴旺；缠枝花卉寓意生命绵延不绝。\n\nThe silver crown is the highest-grade headpiece in Miao ceremonial attire, custom-made for the bride. The twin-dragons motif symbolizes cosmic harmony; hundred-birds-hailing-phoenix represents family prosperity; scrolling florals signify unbroken continuity of life.',
+      custom: '银冠制作融合了錾刻、镂空、累丝、镶嵌等多种技法。一顶精美银冠价值相当于苗族家庭数年收入，是家族财富与技艺传承的集中体现。\n\nThe crown integrates engraving, openwork, filigree, and inlay techniques. A fine crown can be worth several years of family income.',
+    },
+    '苗族银胸牌': {
+      type: '苗族银胸牌 Miao Silver Chest Ornament',
+      confidence: 92.3,
+      color: '银质本色，中心嵌有红色玛瑙或琉璃 Silver with central red agate or glass inlay',
+      pattern: '太阳纹、乳钉纹、八卦纹 Sun disc, nipple-stud, bagua trigram patterns',
+      meaning: '银胸牌佩戴于胸前正心，是苗族盛装中的"护心镜"。中央太阳纹象征光明与正气驱散邪祟；乳钉纹代表繁星寓意天地护佑；部分胸牌刻有八卦纹，体现苗族与汉文化的交融。\n\nThe silver chest ornament worn over the heart serves as a "heart-protecting mirror." The sun disc symbolizes light dispelling evil; nipple-stud patterns represent stars and cosmic protection; some feature bagua trigrams reflecting Miao-Han cultural exchange.',
+      custom: '银胸牌通常由母亲传给女儿，是苗族女性嫁妆中的重要组成部分。胸牌的重量和工艺复杂度直接体现家族的锻银技艺水平。\n\nChest ornaments are passed mother-to-daughter and form a significant part of the bride\'s dowry. Craftsmanship reflects the family\'s silversmithing prowess.',
+    },
+    '苗族银锁': {
+      type: '苗族银锁 Miao Silver Lock',
+      confidence: 94.1,
+      color: '银白色，常搭配红色编织绳结 Silver-white, often paired with red braided cord knots',
+      pattern: '长命富贵纹、麒麟送子纹、蝙蝠纹 Longevity-wealth, qilin delivering child, bat motifs',
+      meaning: '苗族银锁是给孩童佩戴的祈福护身符，寓意"锁住生命、锁住福气"。锁面"长命富贵"直抒祝愿；麒麟送子纹寄托人丁兴旺；蝙蝠因"蝠"与"福"同音，象征福气临门。\n\nThe Miao silver lock is a protective amulet for children, symbolizing "locking in life, locking in blessings." The characters express wishes for longevity and wealth; qilin motif hopes for abundant offspring; bat (fu) symbolizes fortune.',
+      custom: '银锁在孩子满月或周岁时由外婆赠送，是苗族"姥姥银"传统中最具代表性的物件。通常佩戴至十二岁，之后由父母保管作为传家宝。\n\nThe lock is gifted by the maternal grandmother at the child\'s one-month or one-year celebration. Worn until age twelve, then kept as a family heirloom.',
+    },
+    '苗族银项链': {
+      type: '苗族银项链 Miao Silver Necklace',
+      confidence: 95.4,
+      color: '纯银光泽，层叠佩戴时银光如瀑 Pure silver luster, cascading brilliance when layered',
+      pattern: '鱼纹、螺蛳纹、连环纹 Fish, spiral shell, interlocking ring patterns',
+      meaning: '苗族银项链多层叠戴，层数越多代表家族越富裕。鱼纹寓意年年有余与旺盛生育力；螺蛳纹取材于清水江流域水产，记录苗族滨水而居的生存记忆；连环纹象征家族血脉相承代代不绝。\n\nMiao silver necklaces are worn in multiple layers — more layers signify greater wealth. Fish motifs mean annual abundance and fertility; spiral shell patterns reflect aquatic life of the Qingshui River; interlocking rings symbolize unbroken family lineage.',
+      custom: '银项链按重量分为三两三、六两六、九两九等吉利规格。最重的九两九银项链通常只在鼓藏节祭祖大典上佩戴。\n\nNecklaces are classified into auspicious weight denominations. The heaviest 9.9-tael necklace is reserved for the Guzang Festival ancestor worship ceremony.',
+    },
+    '银质头饰': {
+      type: '银质头饰 Silver Headdress',
+      confidence: 91.8,
+      color: '银白，偶以鎏金或彩色珐琅点缀 Silver-white, occasionally gilt or enamel-accented',
+      pattern: '综合纹样：花卉、禽鸟、云雷纹 Mixed: floral, bird, cloud-thunder patterns',
+      meaning: '银质头饰是多个苗族支系共有的头部银饰统称，涵盖银梳、银围、银簪等形态。银饰在苗族文化中被视为"白色黄金"——不仅是装饰品，更是苗族以银为贵价值观的体现：银能辟邪、保值、在迁徙中随身携带家族财富。\n\n"Silver headdress" collectively refers to head ornaments shared across Miao subgroups. Silver is regarded as "white gold" in Miao culture — it wards off evil, preserves value, and can be carried during migrations as portable family wealth.',
+      custom: '苗族银饰锻造技艺已列入国家级非物质文化遗产名录。苗族银匠无需图纸，全凭心中图谱和手中铁锤，被誉为"月光下的艺术家"。\n\nMiao silver forging has been inscribed on China\'s National Intangible Cultural Heritage list. Silversmiths work without blueprints — earning the title "artists under the moonlight."',
+    },
+    // ==================== 文化兜底条目（LLM 离线时本地应答） ====================
     '苗族百鸟衣': {
       type: '苗族百鸟衣 Miao Hundred-Bird Coat',
       confidence: 96.8,
@@ -966,6 +1072,9 @@ let micStream = null;                // 录音媒体流
         {#if backendLabel}
           <div class="perf-item perf-backend" title="推理后端">{backendLabel}</div>
         {/if}
+        <button class="btn-qr" onclick={toggleQRCode} title="手机扫码访问 / Scan to visit">
+          <svg viewBox="0 0 24 24" width="15" height="15"><rect x="3" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="14" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14 14h4v4M18 14v4h-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
         <button class="btn-lang" onclick={toggleLang} title="Switch Language / 切换语言">
           {lang === 'zh' ? 'EN' : '中'}
         </button>
@@ -1050,7 +1159,7 @@ let micStream = null;                // 录音媒体流
         <!-- 框内主内容 -->
         <div class="frame-content">
           {#if cameraActive}
-            <div class="camera-popup-inner" transition:slide>
+            <div class="camera-popup-inner" transition:scale={{ duration: 350, easing: elasticOut }}>
               <video bind:this={videoElement} autoplay playsinline muted></video>
               <canvas
                 bind:this={overlayCanvas}
@@ -1068,7 +1177,7 @@ let micStream = null;                // 录音媒体流
               {/if}
             </div>
           {:else if capturedImage}
-            <div class="preview-image-wrapper" transition:fade>
+            <div class="preview-image-wrapper" transition:scale={{ duration: 380, easing: quintOut }}>
               <img src={capturedImage} alt="拍摄的服饰图片" />
               <canvas
                 bind:this={overlayCanvas}
@@ -1143,7 +1252,7 @@ let micStream = null;                // 录音媒体流
 
       <!-- 未识别提示 -->
       {#if recognitionFailed}
-        <div class="unrecognized-card" transition:fade>
+        <div class="unrecognized-card" transition:scale={{ duration: 380, easing: elasticOut }}>
           <div class="unrecognized-icon">
             <svg viewBox="0 0 48 48" width="40" height="40"><circle cx="24" cy="24" r="20" fill="none" stroke="#c08040" stroke-width="1.5"/><line x1="24" y1="12" x2="24" y2="28" stroke="#c08040" stroke-width="2" stroke-linecap="round"/><circle cx="24" cy="34" r="2" fill="#c08040"/></svg>
           </div>
@@ -1157,7 +1266,7 @@ let micStream = null;                // 录音媒体流
 
       <!-- 识别结果卡片 -->
       {#if identificationResult}
-        <div class="result-card" transition:fade>
+        <div class="result-card" transition:slide={{ duration: 400, easing: quintOut }}>
           <div class="result-header">
             <span class="badge-type">{identificationResult.type}</span>
             <span class="badge-confidence">{identificationResult.confidence}%</span>
@@ -1228,7 +1337,7 @@ let micStream = null;                // 录音媒体流
           </div>
         {:else}
           {#each messages as msg (msg.id)}
-            <div class="chat-bubble {msg.role}" in:fly={{ y: 16, duration: 350 }}>
+            <div class="chat-bubble {msg.role}" in:fly={{ y: 24, duration: 450, easing: quintOut }} out:scale={{ duration: 200, opacity: 0 }}>
               <div class="bubble-avatar">
                 {#if msg.role === 'assistant'}
                   <div class="avatar ai">
@@ -1253,7 +1362,7 @@ let micStream = null;                // 录音媒体流
           {/each}
 
           {#if isStreaming}
-            <div class="chat-bubble assistant streaming-bubble" in:fly={{ y: 16, duration: 350 }}>
+            <div class="chat-bubble assistant streaming-bubble" in:fly={{ y: 20, duration: 400, easing: quintOut }}>
               <div class="bubble-avatar">
                 <div class="avatar ai">
                   <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 16 C4 8 10 2 12 2 C14 2 20 8 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -1272,7 +1381,7 @@ let micStream = null;                // 录音媒体流
           {/if}
 
           {#if isLoading && !isStreaming}
-            <div class="chat-bubble assistant loading-bubble" in:fly={{ y: 16, duration: 350 }}>
+            <div class="chat-bubble assistant loading-bubble" in:fly={{ y: 20, duration: 400, easing: quintOut }}>
               <div class="bubble-avatar">
                 <div class="avatar ai">
                   <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 16 C4 8 10 2 12 2 C14 2 20 8 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -1422,6 +1531,35 @@ let micStream = null;                // 录音媒体流
     </button>
     <span class="voice-info">{t.voiceInfo[lang]}</span>
   </footer>
+
+  <!-- 二维码弹窗 -->
+  {#if showQRCode}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_interactive_supports_focus -->
+    <div class="qr-overlay" onclick={closeQRModal} onkeydown={(e) => e.key === 'Escape' && (showQRCode = false)} role="dialog" aria-modal="true" tabindex="-1" aria-label={lang === 'zh' ? '二维码弹窗' : 'QR Code Dialog'} transition:fade={{ duration: 250 }}>
+      <div class="qr-modal" transition:scale={{ duration: 380, easing: elasticOut }}>
+        <button class="qr-close" onclick={() => showQRCode = false} aria-label={lang === 'zh' ? '关闭二维码' : 'Close QR code'}>
+          <svg viewBox="0 0 24 24" width="18" height="18"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <div class="qr-icon-header">
+          <span class="qr-diamond">◆</span>
+          <span class="qr-title">{lang === 'zh' ? '手机扫码访问' : 'Scan to Visit'}</span>
+          <span class="qr-diamond">◆</span>
+        </div>
+        <div class="qr-image-box">
+          {#if qrCodeDataUrl}
+            <img src={qrCodeDataUrl} alt="QR Code" class="qr-image" />
+          {:else}
+            <div class="qr-loading">
+              <span class="spinner"></span>
+              <span>{lang === 'zh' ? '生成中…' : 'Generating…'}</span>
+            </div>
+          {/if}
+        </div>
+        <p class="qr-hint">{lang === 'zh' ? '使用微信、支付宝或浏览器扫一扫，在手机上打开苗绣·识裳' : 'Scan with WeChat, Alipay or browser to open on your phone'}</p>
+        <div class="qr-url">{typeof window !== 'undefined' ? window.location.origin + window.location.pathname : ''}</div>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -1534,11 +1672,13 @@ let micStream = null;                // 录音媒体流
     transition: all 0.3s ease;
   }
   .miao-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 15px rgba(94, 207, 209, 0.4);
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 4px 18px rgba(94, 207, 209, 0.45);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   .miao-btn:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.97);
+    transition: all 0.1s ease;
   }
   .miao-btn:disabled {
     opacity: 0.5;
@@ -1707,14 +1847,41 @@ let micStream = null;                // 录音媒体流
     font-size: 0.7rem;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.25s;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     letter-spacing: 0.04em;
     flex-shrink: 0;
   }
   .btn-lang:hover {
     background: rgba(94, 207, 209, 0.28);
-    box-shadow: 0 0 10px rgba(94, 207, 209, 0.3);
-    transform: scale(1.05);
+    box-shadow: 0 0 14px rgba(94, 207, 209, 0.4);
+    transform: scale(1.08);
+  }
+  .btn-lang:active {
+    transform: scale(0.95);
+  }
+
+  /* 二维码按钮 */
+  .btn-qr {
+    width: 36px;
+    height: 28px;
+    border-radius: 14px;
+    border: 1px solid rgba(168, 130, 221, 0.45);
+    background: rgba(168, 130, 221, 0.12);
+    color: #c0a8e8;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    flex-shrink: 0;
+  }
+  .btn-qr:hover {
+    background: rgba(168, 130, 221, 0.28);
+    box-shadow: 0 0 16px rgba(168, 130, 221, 0.35);
+    transform: scale(1.08);
+  }
+  .btn-qr:active {
+    transform: scale(0.95);
   }
   
   .header-pattern-bottom {
@@ -2049,8 +2216,14 @@ let micStream = null;                // 录音媒体流
 
   .btn-camera-main:hover {
     border-color: #5a9aca;
-    box-shadow: 0 0 16px rgba(90, 154, 202, 0.3);
+    box-shadow: 0 0 20px rgba(90, 154, 202, 0.4);
     background: linear-gradient(145deg, #244a6a, #1a3050);
+    transform: translateY(-2px);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-camera-main:active {
+    transform: translateY(0) scale(0.97);
+    transition: all 0.1s ease;
   }
 
   .btn-capture {
@@ -2062,8 +2235,13 @@ let micStream = null;                // 录音媒体流
   }
 
   .btn-capture:hover {
-    box-shadow: 0 6px 20px rgba(192, 168, 106, 0.55);
-    transform: translateY(-1px);
+    box-shadow: 0 6px 24px rgba(192, 168, 106, 0.6);
+    transform: translateY(-2px) scale(1.03);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-capture:active {
+    transform: translateY(0) scale(0.96);
+    transition: all 0.1s ease;
   }
 
   .btn-close-cam {
@@ -2344,14 +2522,20 @@ let micStream = null;                // 录音媒体流
   }
 
   .btn-welcome-session:hover {
-    box-shadow: 0 6px 22px rgba(94, 207, 209, 0.5);
-    transform: translateY(-2px);
+    box-shadow: 0 6px 26px rgba(94, 207, 209, 0.55);
+    transform: translateY(-3px) scale(1.04);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-welcome-session:active {
+    transform: translateY(0) scale(0.96);
+    transition: all 0.1s ease;
   }
 
   /* -- 聊天气泡 -- */
   .chat-bubble {
     display: flex;
     gap: 8px;
+    will-change: transform, opacity;
   }
 
   .chat-bubble.assistant {
@@ -2447,6 +2631,15 @@ let micStream = null;                // 录音媒体流
       linear-gradient(135deg, #3a6ea5, #5ecfd1);
     border-radius: 18px 18px 18px 4px;
     box-shadow: 0 2px 8px rgba(58, 110, 165, 0.3);
+    transition: box-shadow 0.4s ease;
+  }
+  /* 流式气泡：光晕呼吸动画 */
+  .streaming-bubble .bubble-text {
+    animation: streamGlow 2.5s ease-in-out infinite;
+  }
+  @keyframes streamGlow {
+    0%, 100% { box-shadow: 0 2px 8px rgba(58, 110, 165, 0.3); }
+    50% { box-shadow: 0 2px 18px rgba(94, 207, 209, 0.5); }
   }
 
   .user .bubble-text {
@@ -2476,7 +2669,7 @@ let micStream = null;                // 录音媒体流
 
   /* 打字机光标闪烁 */
   .cursor-blink {
-    animation: cursorFlash 0.8s step-end infinite;
+    animation: cursorFlash 0.7s ease-in-out infinite;
     color: #5ecfd1;
     font-weight: 300;
   }
@@ -2532,8 +2725,13 @@ let micStream = null;                // 录音媒体流
   }
 
   .btn-send:hover:not(:disabled) {
-    box-shadow: 0 0 14px rgba(94, 207, 209, 0.4);
-    transform: translateY(-1px);
+    box-shadow: 0 0 18px rgba(94, 207, 209, 0.5);
+    transform: translateY(-2px) scale(1.04);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-send:active:not(:disabled) {
+    transform: translateY(0) scale(0.96);
+    transition: all 0.1s ease;
   }
 
   .btn-send:disabled {
@@ -2654,10 +2852,16 @@ let micStream = null;                // 录音媒体流
   }
 
   .quick-btn:hover {
-    border-color: rgba(100, 150, 200, 0.4);
-    background: rgba(16, 28, 44, 0.9);
+    border-color: rgba(100, 150, 200, 0.5);
+    background: rgba(16, 28, 44, 0.92);
     color: #8ab8d0;
-    box-shadow: 0 0 10px rgba(74, 106, 138, 0.2);
+    box-shadow: 0 0 14px rgba(74, 106, 138, 0.3);
+    transform: translateX(3px);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .quick-btn:active {
+    transform: translateX(1px) scale(0.97);
+    transition: all 0.1s ease;
   }
 
   .qb-icon {
@@ -2714,12 +2918,17 @@ let micStream = null;                // 录音媒体流
     border-radius: 8px;
     color: #4a6a8a;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   .nav-tab:hover {
     background: rgba(74, 110, 140, 0.1);
     color: #6a9ab0;
+    transform: translateY(-2px);
+  }
+  .nav-tab:active {
+    transform: translateY(0) scale(0.96);
+    transition: all 0.1s ease;
   }
 
   .nav-tab.active {
@@ -2850,6 +3059,144 @@ let micStream = null;                // 录音媒体流
     letter-spacing: 0.04em;
   }
   
+  /* ========== 二维码弹窗 ========== */
+  .qr-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(6, 12, 22, 0.82);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.25s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .qr-modal {
+    position: relative;
+    background: linear-gradient(160deg, #101e32, #0c1828, #0f1d30);
+    border: 1px solid rgba(94, 207, 209, 0.35);
+    border-radius: 20px;
+    padding: 32px 28px 24px;
+    text-align: center;
+    max-width: 360px;
+    width: 90%;
+    box-shadow:
+      0 0 40px rgba(94, 207, 209, 0.18),
+      0 0 80px rgba(0, 0, 0, 0.5),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .qr-modal::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 20px;
+    padding: 1.5px;
+    background: linear-gradient(135deg, #5ecfd1, #a882dd, #5ecfd1);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .qr-close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: #7aaccc;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .qr-close:hover {
+    background: rgba(255, 107, 107, 0.2);
+    border-color: rgba(255, 107, 107, 0.45);
+    color: #ff8a8a;
+    transform: rotate(90deg) scale(1.1);
+  }
+
+  .qr-icon-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .qr-diamond {
+    color: #5ecfd1;
+    font-size: 0.55rem;
+    opacity: 0.7;
+    text-shadow: 0 0 6px rgba(94, 207, 209, 0.4);
+  }
+  .qr-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #d0e8ff;
+    letter-spacing: 0.08em;
+  }
+
+  .qr-image-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 220px;
+    height: 220px;
+    margin: 0 auto 14px;
+    background: #0f1d2e;
+    border-radius: 14px;
+    border: 1px solid rgba(94, 207, 209, 0.25);
+    overflow: hidden;
+    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.4), 0 0 16px rgba(94, 207, 209, 0.1);
+  }
+  .qr-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+  .qr-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    color: #4a7a9a;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+  }
+
+  .qr-hint {
+    font-size: 0.7rem;
+    color: #5a7a9a;
+    line-height: 1.55;
+    margin-bottom: 10px;
+    letter-spacing: 0.03em;
+  }
+  .qr-url {
+    font-size: 0.65rem;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    color: #3a6a8a;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 6px 14px;
+    border-radius: 10px;
+    word-break: break-all;
+    letter-spacing: 0.03em;
+  }
+
   /* 响应式调整 */
   @media (max-width: 900px) {
     .main-layout {
