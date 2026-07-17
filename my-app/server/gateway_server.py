@@ -167,12 +167,23 @@ async def spa_fallback(request: Request, call_next):
 @app.get("/health")
 async def health():
     svc = {}
-    for name, url in [("yolo", f"{YOLO_URL}/health"), ("asr", f"{ASR_URL}/health"), ("tts", f"{TTS_URL}/health")]:
+    # YOLO + ASR 始终在 K1 本地
+    for name, url in [("yolo", f"{YOLO_URL}/health"), ("asr", f"{ASR_URL}/health")]:
         try:
             r = http_requests.get(url, timeout=3)
             svc[name] = "✓" if r.status_code == 200 else f"✗({r.status_code})"
         except Exception:
             svc[name] = "✗"
+    # TTS: swarm 模式下在远程 PC，跳过健康检查
+    tts_is_remote = "127.0.0.1" not in TTS_URL and "localhost" not in TTS_URL
+    if tts_is_remote:
+        svc["tts"] = f"→ {TTS_URL}"  # 远程服务，不检查
+    else:
+        try:
+            r = http_requests.get(f"{TTS_URL}/health", timeout=3)
+            svc["tts"] = "✓" if r.status_code == 200 else f"✗({r.status_code})"
+        except Exception:
+            svc["tts"] = "✗"
     ollama_ok = False
     try:
         r = http_requests.get(f"{OLLAMA_HOST}/api/tags", timeout=3)
@@ -181,6 +192,7 @@ async def health():
     return {
         "status": "ok",
         "platform": _ARCH,
+        "mode": "swarm" if tts_is_remote else "standalone",
         "services": svc,
         "ollama": "✓" if ollama_ok else "✗",
         "memory_mb": monitor.memory_used_mb(),
@@ -291,7 +303,7 @@ async def asr_transcribe(audio: UploadFile = File(...)):
     except http_requests.ConnectionError:
         raise HTTPException(503, "ASR 服务不可用")
 
-# ---- /tts → tts:8002 ----
+# ---- /tts → tts:8002 (K1 本地或 Swarm 远程 PC) ----
 @app.post("/tts")
 async def tts_synthesize(request: Request):
     try:
@@ -299,12 +311,14 @@ async def tts_synthesize(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     t0 = time.perf_counter()
+    # Swarm 模式下 TTS 在远程 PC，网络延迟较高，超时放宽到 180s
+    tts_is_remote = "127.0.0.1" not in TTS_URL and "localhost" not in TTS_URL
+    tts_timeout = 180 if tts_is_remote else 120
     try:
-        r = http_requests.post(f"{TTS_URL}/tts", json=body, timeout=120)
+        r = http_requests.post(f"{TTS_URL}/tts", json=body, timeout=tts_timeout)
         proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))
         if r.status_code != 200:
             raise HTTPException(502, f"TTS 返回 {r.status_code}")
-        # 显式设置音频响应头，确保浏览器能解码播放
         return Response(
             content=r.content,
             media_type="audio/wav",
@@ -315,7 +329,10 @@ async def tts_synthesize(request: Request):
             },
         )
     except http_requests.ConnectionError:
-        raise HTTPException(503, "TTS 服务不可用")
+        target = f"远程 PC ({TTS_URL})" if tts_is_remote else "本地 TTS"
+        raise HTTPException(503, f"{target} 服务不可达")
+    except http_requests.Timeout:
+        raise HTTPException(504, f"TTS 合成超时 ({tts_timeout}s)")
 
 # ---- /chat (Ollama 代理) ----
 @app.post("/chat")

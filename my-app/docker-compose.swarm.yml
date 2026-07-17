@@ -87,7 +87,9 @@ services:
     network_mode: host
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5-instruct}
+      # 不设默认模型 — 自动发现 Ollama 已注册模型（miao*/qwen* 优先）
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-}
+      - OLLAMA_MODEL_KEYWORDS=${OLLAMA_MODEL_KEYWORDS:-miao,qwen}
       # ASR 留在 K1 本机，TTS 指向 PC
       - YOLO_URL=http://127.0.0.1:8000
       - ASR_URL=http://127.0.0.1:8001
