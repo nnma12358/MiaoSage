@@ -350,7 +350,7 @@ async def chat(request: Request):
         ollama_msgs.append({"role": "system", "content": _SYSTEM_PROMPT})
     ollama_msgs += messages
     payload = {"model": get_ollama_model(), "messages": ollama_msgs, "stream": False,
-               "options": {"num_ctx": 512}}
+               "options": {"num_ctx": 768, "num_predict": 150, "num_thread": 4}}
     logger.info(f"→ Ollama /api/chat model={payload['model']} msgs={len(ollama_msgs)}")
     llm_guard.enter()
     t0 = time.perf_counter()
@@ -393,7 +393,7 @@ async def chat_stream(request: Request):
         ollama_msgs_chat.append({"role": "system", "content": _SYSTEM_PROMPT})
     ollama_msgs_chat += messages
     payload = {"model": get_ollama_model(), "messages": ollama_msgs_chat, "stream": True,
-               "options": {"num_ctx": 512}}
+               "options": {"num_ctx": 768, "num_predict": 150, "num_thread": 4}}
 
     async def generate():
         yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
