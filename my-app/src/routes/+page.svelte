@@ -1586,6 +1586,14 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       0%, 100% { box-shadow: 0 0 20px rgba(255, 80, 80, 0.35); }
       50% { box-shadow: 0 0 40px rgba(255, 80, 80, 0.55); }
     }
+    @keyframes streamGlow {
+      0%, 100% { box-shadow: 0 2px 8px rgba(58, 110, 165, 0.3); }
+      50% { box-shadow: 0 2px 18px rgba(94, 207, 209, 0.5); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
   }
 
   /* ========== CSS 变量 -- 苗绣色调 ========== */
@@ -2130,11 +2138,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     animation: livePulse 2s ease-in-out infinite;
   }
 
-  @keyframes livePulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.7; }
-  }
-
   .preview-image-wrapper {
     width: 100%;
     height: 100%;
@@ -2298,8 +2301,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
-
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   .hidden-canvas {
     display: none;
@@ -2636,10 +2637,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
   /* 流式气泡：光晕呼吸动画 */
   .streaming-bubble .bubble-text {
     animation: streamGlow 2.5s ease-in-out infinite;
-  }
-  @keyframes streamGlow {
-    0%, 100% { box-shadow: 0 2px 8px rgba(58, 110, 165, 0.3); }
-    50% { box-shadow: 0 2px 18px rgba(94, 207, 209, 0.5); }
   }
 
   .user .bubble-text {
@@ -3009,11 +3006,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     animation: recordPulse 1.5s ease-in-out infinite;
   }
 
-  @keyframes recordPulse {
-    0%, 100% { box-shadow: 0 0 20px rgba(255, 80, 80, 0.35); }
-    50% { box-shadow: 0 0 40px rgba(255, 80, 80, 0.55); }
-  }
-
   .voice-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
@@ -3048,11 +3040,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
   .wave-bars span:nth-child(4) { height: 12px; animation-delay: 0.3s; }
   .wave-bars span:nth-child(5) { height: 10px; animation-delay: 0.4s; }
   
-  @keyframes wave {
-    0%, 100% { transform: scaleY(0.6); opacity: 0.6; }
-    50% { transform: scaleY(1); opacity: 1; }
-  }
-  
   .voice-info {
     font-size: 0.66rem;
     color: #3a5a7a;
@@ -3071,11 +3058,6 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     align-items: center;
     justify-content: center;
     animation: fadeIn 0.25s ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to   { opacity: 1; }
   }
 
   .qr-modal {
