@@ -110,7 +110,7 @@ services:
       options: { max-size: "20m", max-file: "3" }
 
   # ========================
-  # PC — Piper TTS 语音合成
+  # PC — MeloTTS 语音合成
   # ========================
   tts-pc:
     build:
@@ -121,21 +121,21 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - TTS_BACKEND=${TTS_BACKEND:-piper}
-      - TTS_VOICE=${TTS_VOICE:-zh_CN-huayan-medium}
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-ZH}
+      - TTS_SPEAKER=${TTS_SPEAKER:-0}
+      - TTS_SPEED=${TTS_SPEED:-1.0}
       - TTS_MAX_LEN=${TTS_MAX_LEN:-300}
-      - PIPER_MODEL=${PIPER_MODEL:-/opt/piper/zh_CN-huayan-medium.onnx}
-      - PIPER_CONFIG=${PIPER_CONFIG:-/opt/piper/zh_CN-huayan-medium.onnx.json}
+      - MELO_MODEL_DIR=/app/models
     volumes:
-      - pc-cache:/root/.cache
+      - melo-models:/app/models
     profiles:
       - pc
       - all
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 1024M
+          cpus: '4.0'
+          memory: 2048M
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "3" }
@@ -143,5 +143,5 @@ services:
 volumes:
   k1-cache:
     name: miao-k1-cache
-  pc-cache:
-    name: miao-pc-cache
+  melo-models:
+    name: miao-melo-models

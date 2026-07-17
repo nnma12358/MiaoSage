@@ -1,151 +1,164 @@
 #!/usr/bin/env python3
 """
-苗绣·识裳 — TTS 语音合成（PC 端 · edge-tts 轻量）
+苗绣·识裳 — TTS 语音合成（PC 端 · MeloTTS 容器化）
 ========================================================
-默认 edge-tts（微软免费，纯 pip，音质最佳，中文自然）。
-可选后端：
-  TTS_BACKEND=edge-tts  (默认，需联网，纯 pip)
-  TTS_BACKEND=piper     (离线高音质，需预下载 piper+模型)
-  TTS_BACKEND=espeak    (离线，需 apt espeak-ng)
+MeloTTS: 开源高音质中文 TTS，本地推理，无需联网。
+  - 默认中文女声 (ZH, speaker_id=0)
+  - CPU 推理，无需 GPU
+  - 自动下载模型到 /app/models（首次启动）
+
+环境变量：
+  TTS_LANGUAGE=ZH         # 语言代码
+  TTS_SPEAKER=0           # 说话人 ID
+  TTS_SPEED=1.0           # 语速 (0.5-2.0)
+  TTS_MAX_LEN=300         # 最大文本长度
 """
 import os, sys, logging, tempfile, asyncio, concurrent.futures
+from pathlib import Path
+
+# 确保 torch/torchaudio 共享库可被加载
+_torch_lib = Path(__file__).resolve().parent / ".torch_libs"
+# 在容器中 torch 库位于 site-packages/torch/lib/
+import site
+for _sp in site.getsitepackages():
+    _candidate = Path(_sp) / "torch" / "lib"
+    if _candidate.is_dir():
+        os.environ.setdefault("LD_LIBRARY_PATH", "")
+        if str(_candidate) not in os.environ["LD_LIBRARY_PATH"]:
+            os.environ["LD_LIBRARY_PATH"] = str(_candidate) + ":" + os.environ["LD_LIBRARY_PATH"]
+        break
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("tts-pc")
+logger = logging.getLogger("tts-melo")
+
+
+def _detect_device() -> str:
+    """自动检测最优推理设备：CUDA > MPS > CPU"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU detected: {gpu_name} (CUDA)")
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("GPU detected: Apple MPS")
+            return "mps"
+    except ImportError:
+        logger.info("torch not installed, falling back to CPU")
+    except Exception as e:
+        logger.warning(f"GPU detection failed ({e}), falling back to CPU")
+    logger.info("No GPU detected, using CPU")
+    return "cpu"
 
 # ---- 配置 ----
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "edge-tts")
-TTS_VOICE = os.environ.get("TTS_VOICE", "zh-CN-XiaoxiaoNeural")  # edge-tts 中文甜美女声
-TTS_RATE = os.environ.get("TTS_RATE", "+0%")    # edge-tts 语速百分比 / piper length-scale / espeak wpm
-TTS_MAX_LEN = int(os.environ.get("TTS_MAX_LEN", "300"))  # PC 端可处理更长文本
+TTS_LANGUAGE = os.environ.get("TTS_LANGUAGE", "ZH")
+TTS_SPEAKER  = int(os.environ.get("TTS_SPEAKER", "0"))
+TTS_SPEED    = float(os.environ.get("TTS_SPEED", "1.0"))
+TTS_MAX_LEN  = int(os.environ.get("TTS_MAX_LEN", "300"))
 
-# 线程池用于运行同步代码（piper 后端）
+# 模型缓存目录（挂载卷可复用）
+MODEL_DIR = Path(os.environ.get("MELO_MODEL_DIR", "/app/models"))
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
+os.environ["MELO_DIR"] = str(MODEL_DIR)
+
 _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
-class TTSEngine:
-    """统一 TTS 接口，根据 TTS_BACKEND 选择实现"""
+class MeloTTS:
+    """MeloTTS 封装 — 惰性加载、线程安全、自动 GPU 检测"""
 
     def __init__(self):
-        self._backend = TTS_BACKEND
+        self._model = None
+        self._device = _detect_device()
         self._tmp_dir = tempfile.gettempdir()
-        os.makedirs(self._tmp_dir, exist_ok=True)
-        logger.info(f"TTS 后端: {self._backend}, 音色: {TTS_VOICE}")
+        logger.info(f"MeloTTS init: lang={TTS_LANGUAGE} speaker={TTS_SPEAKER} speed={TTS_SPEED} device={self._device}")
+
+    def _load_model(self):
+        """惰性加载 MeloTTS 模型（首次推理触发，含自动下载）"""
+        if self._model is not None:
+            return
+        logger.info(f"Loading MeloTTS model (lang={TTS_LANGUAGE}, device={self._device})...")
+        from melo.api import TTS
+        self._model = TTS(language=TTS_LANGUAGE, device=self._device)
+        try:
+            n_speakers = self._model.hps.data.n_speakers if hasattr(self._model, 'hps') else '?'
+        except Exception:
+            n_speakers = '?'
+        logger.info(f"MeloTTS model loaded (device={self._device}, speakers={n_speakers})")
 
     async def synthesize(self, text: str) -> str:
-        """异步合成入口"""
+        """异步合成入口，返回 WAV 文件路径"""
         text = text.strip()
         if not text:
-            raise ValueError("文本为空")
+            raise ValueError("text is empty")
 
         if len(text) > TTS_MAX_LEN:
-            logger.warning(f"文本过长 ({len(text)} → {TTS_MAX_LEN})，已截断")
+            logger.warning(f"Text truncated ({len(text)} -> {TTS_MAX_LEN})")
             text = text[:TTS_MAX_LEN]
 
-        logger.info(f"TTS 合成 [{self._backend}] (len={len(text)}): {text[:50]}...")
-
-        if self._backend == "piper":
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(_thread_pool, self._synthesize_piper, text)
-        elif self._backend == "espeak":
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(_thread_pool, self._synthesize_espeak, text)
-        elif self._backend == "edge-tts":
-            return await self._synthesize_edge(text)
-        else:
-            raise ValueError(f"未知 TTS 后端: {self._backend}")
-
-    def _synthesize_espeak(self, text: str) -> str:
-        """espeak-ng: 离线本地 TTS，支持中文，零模型 (~10MB)"""
-        import subprocess
-        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
-        # -v zh: 中文  -s speed: 语速 (80-450)  -w: 输出 WAV
-        cmd = ["espeak-ng", "-v", TTS_VOICE, "-s", TTS_RATE, "-w", out_path, text]
-        result = subprocess.run(cmd, capture_output=True, timeout=30)
-        if result.returncode != 0:
-            err = result.stderr.decode()
-            raise RuntimeError(f"espeak-ng 失败: {err}")
-        size_kb = os.path.getsize(out_path) / 1024
-        logger.info(f"espeak-ng 合成完成: {out_path} ({size_kb:.1f} KB)")
-        return out_path
-
-    async def _synthesize_edge(self, text: str) -> str:
-        """edge-tts: 微软免费 TTS，通过 CLI 子进程调用（隔离事件循环）"""
-        import subprocess, json
-
-        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.mp3")
-        voice = TTS_VOICE
-        rate = TTS_RATE
-
-        def _run():
-            result = subprocess.run(
-                ["edge-tts", "--voice", voice, "--rate", rate, "--text", text, "--write-media", out_path],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"edge-tts CLI failed: {result.stderr[:200]}")
-            return out_path
+        logger.info(f"TTS [MeloTTS] len={len(text)}: {text[:60]}...")
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(_thread_pool, _run)
+        return await loop.run_in_executor(_thread_pool, self._synthesize_sync, text)
 
-        size_kb = os.path.getsize(result) / 1024
-        logger.info(f"edge-tts 合成完成: {result} ({size_kb:.1f} KB)")
-        return result
+    def _synthesize_sync(self, text: str) -> str:
+        """同步合成（在线程池中运行，避免阻塞事件循环）"""
+        self._load_model()
 
-    def _synthesize_piper(self, text: str) -> str:
-        """Piper TTS: 离线高音质中文（需预下载模型）"""
-        import subprocess
+        out_path = os.path.join(
+            self._tmp_dir,
+            f"tts_melo_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav"
+        )
 
-        piper_model = os.environ.get("PIPER_MODEL", "/opt/piper/zh_CN-huayan-medium.onnx")
-        piper_config = os.environ.get("PIPER_CONFIG", "/opt/piper/zh_CN-huayan-medium.onnx.json")
-
-        out_path = os.path.join(self._tmp_dir, f"tts_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
-
-        # Piper 直接输出 WAV（--output_file 指定 .wav 即可，无需 ffmpeg）
-        cmd = [
-            "piper", "-m", piper_model, "-c", piper_config,
-            "-f", out_path,
-            "--length-scale", TTS_RATE,   # 语速 0.5-2.0
-        ]
-        result = subprocess.run(cmd, input=text.encode("utf-8"),
-                                capture_output=True, timeout=60)
-        if result.returncode != 0:
-            raise RuntimeError(f"Piper TTS 失败: {result.stderr.decode()}")
+        # MeloTTS API: tts_to_file(text, speaker_id, output_path, speed=1.0)
+        self._model.tts_to_file(
+            text=text,
+            speaker_id=TTS_SPEAKER,
+            output_path=out_path,
+            speed=TTS_SPEED,
+        )
 
         size_kb = os.path.getsize(out_path) / 1024
-        logger.info(f"Piper TTS 合成完成: {out_path} ({size_kb:.1f} KB)")
+        logger.info(f"MeloTTS done: {out_path} ({size_kb:.1f} KB)")
         return out_path
 
 
 # ---- FastAPI ----
-app = FastAPI(title="TTS PC Service")
+app = FastAPI(title="TTS MeloTTS Service")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
-engine: TTSEngine = None
+engine: MeloTTS = None
 
 
 @app.on_event("startup")
 async def startup():
     global engine
-    engine = TTSEngine()
-    # 预热（Piper 首次推理较慢）
+    engine = MeloTTS()
+    # 预热：触发模型下载 + 首次推理
     try:
-        if TTS_BACKEND == "piper":
-            await engine.synthesize("预热")
-            logger.info("TTS Piper 预热完成 ✓")
+        logger.info("MeloTTS warmup...")
+        await engine.synthesize("预热")
+        logger.info("MeloTTS warmup done")
     except Exception as e:
-        logger.warning(f"TTS 预热跳过: {e}")
-    logger.info("TTS PC 服务就绪 ✓")
+        logger.warning(f"MeloTTS warmup skipped: {e}")
+    logger.info("TTS MeloTTS Service ready")
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "backend": TTS_BACKEND, "voice": TTS_VOICE}
+    return {
+        "status": "ok",
+        "backend": "melotts",
+        "language": TTS_LANGUAGE,
+        "speaker": TTS_SPEAKER,
+        "speed": TTS_SPEED,
+        "device": engine._device if engine else "unknown",
+    }
 
 
 @app.post("/tts")
@@ -153,37 +166,32 @@ async def synthesize(request: Request):
     try:
         body = await request.json()
     except Exception:
-        raise HTTPException(400, "无效 JSON")
+        raise HTTPException(400, "invalid JSON")
 
     text = body.get("text", "").strip()
     if not text:
-        raise HTTPException(400, "text 为空")
+        raise HTTPException(400, "text is empty")
 
     try:
-        logger.info(f"TTS request: text={repr(text[:80])}")
         audio_path = await engine.synthesize(text)
 
-        # 根据后端决定 MIME 类型
-        ext = os.path.splitext(audio_path)[1].lower()
-        mime_map = {".mp3": "audio/mpeg", ".wav": "audio/wav"}
-        media_type = mime_map.get(ext, "audio/wav")
+        # 读取全部音频字节后立即删除临时文件，避免 FileResponse 后台清理截断问题
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+        try:
+            os.unlink(audio_path)
+        except OSError:
+            pass
 
-        async def cleanup():
-            try:
-                if os.path.exists(audio_path):
-                    os.unlink(audio_path)
-            except OSError:
-                pass
-
-        return FileResponse(
-            audio_path,
-            media_type=media_type,
-            filename=f"speech{ext}",
-            background=cleanup,
+        return Response(
+            content=audio_bytes,
+            media_type="audio/wav",
+            headers={"Content-Disposition": "inline; filename=speech.wav"},
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
-    except RuntimeError as e:
+    except Exception as e:
+        logger.exception("TTS synthesis failed")
         raise HTTPException(500, str(e))
 
 

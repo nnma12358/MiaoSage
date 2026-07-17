@@ -37,7 +37,7 @@
 | 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
 | 🗣️ **语音合成** | edge-tts / MeloTTS | 文字 → 自然语音 · 可卸载到 PC 运行 |
-| 🧠 **智能对话** | Qwen2.5-Instruct | 苗族文化专家问答 · Ollama 部署 |
+| 🧠 **智能对话** | Qwen2.5-0.5B LoRA | 苗族文化专家问答 · Ollama 部署 · 模型自动发现 · K1 推理优化 |
 | 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · 端侧运行 |
 
 > 💡 **三模式部署**：Swarm 分布式（K1+PC） / Docker 多容器（8GB） / 单进程静态（2GB），灵活适配不同硬件条件
@@ -228,7 +228,7 @@ cp .env.swarm.example .env.swarm
 | `TTS_BACKEND` | `edge-tts` | TTS 后端：`edge-tts`（需联网）/ `piper`（离线） |
 | `TTS_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 中文音色（甜美女声） |
 | `TTS_MAX_LEN` | `300` | 单次合成最大字符数（PC 端可设更大） |
-| `OLLAMA_MODEL` | `qwen2.5-instruct` | K1 端 Ollama 模型名 |
+| `OLLAMA_MODEL` | （自动发现） | K1 端 Ollama 模型名，留空自动匹配 miao*/qwen* |
 | `YOLO_MODEL` | `yolov8n.onnx` | YOLO 检测模型 |
 
 ### 第二步：PC 端启动 TTS
@@ -326,6 +326,45 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/me
 │+cloth│
 └──────┘
 ```
+
+---
+
+## 🎛️ 模型配置
+
+### 自动发现机制
+
+网关启动时自动查询 Ollama 已注册模型，按优先级匹配：
+
+```
+OLLAMA_MODEL 环境变量 → 关键字匹配 (miao > qwen > ...) → 首个可用 → 兜底
+```
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `OLLAMA_MODEL` | 显式指定模型名（跳过自动发现） | 空 |
+| `OLLAMA_MODEL_KEYWORDS` | 自动发现关键字（逗号分隔） | `miao,qwen` |
+| `OLLAMA_HOST` | Ollama 服务地址 | `http://127.0.0.1:11434` |
+
+```bash
+# 查看可用模型与当前选用
+curl -k https://127.0.0.1:443/ollama/models
+
+# 热切换模型后刷新
+curl -k -X POST https://127.0.0.1:443/ollama/refresh
+```
+
+### K1 推理优化 (Modelfile)
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `num_ctx` | 512 | 上下文窗口 — CPU 推理每减 256 tokens 提速 ~30% |
+| `num_predict` | 150 | 最大输出 tokens |
+| `num_thread` | 2 | K1 4 核留 2 核给 OS + Docker 四容器 |
+| `temperature` | 0.6 | 0.5B 小模型需更高随机性防 token 重复死循环 |
+| `repeat_penalty` | 1.25 | 增强重复惩罚，打断输出循环 |
+| `top_k` / `top_p` | 50 / 0.85 | 核采样参数，增加输出多样性 |
+
+> 📖 完整 Modelfile 参见 [`LLM/train-qwen2.5 0.5b/models/Modelfile`](LLM/train-qwen2.5%200.5b/models/Modelfile)
 
 ---
 
