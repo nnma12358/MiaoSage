@@ -166,10 +166,10 @@ miao-sage/
 
 ```bash
 cd my-app
-bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
+docker compose --profile standalone up -d --build
 ```
 
-> 四容器各司其职（YOLO / ASR / TTS / Gateway），易于维护和独立扩缩容。
+> 四容器各司其职（YOLO / ASR / TTS / Gateway），或通过 `TTS_HOST` 切换 Swarm 模式。
 
 ### 📦 方式三：静态单进程（轻量 · 2GB 内存可用）
 
@@ -235,21 +235,19 @@ cp .env.swarm.example .env.swarm
 
 ```bash
 # 在 PC 上执行（需要 Docker）
-docker compose -f docker-compose.swarm.yml --profile pc up -d --build
+cd my-app
+docker compose --profile swarm-pc up -d --build
 
 # 验证 TTS 就绪
 curl http://localhost:8002/health
-# → {"status":"ok","backend":"edge-tts","voice":"zh-CN-XiaoxiaoNeural"}
 ```
-
-> **PC 依赖**：Docker Desktop（Windows）或 Docker Engine（Linux），无需 GPU。
 
 ### 第三步：K1 端启动核心服务
 
 ```bash
 # 在 K1 上执行
 cd /path/to/MiaoSage/my-app
-docker compose -f docker-compose.swarm.yml --profile k1 up -d --build
+TTS_HOST=<PC_IP> docker compose up -d --build
 
 # 验证全链路
 curl -k https://localhost/health

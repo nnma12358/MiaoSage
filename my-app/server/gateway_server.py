@@ -425,7 +425,9 @@ if __name__ == "__main__":
     args = p.parse_args()
     if not _SPA_INDEX.exists():
         logger.error(f"前端不存在: {_SPA_INDEX}")
-    logger.info(f"网关启动: {args.host}:{args.port} | YOLO={YOLO_URL} ASR={ASR_URL} TTS={TTS_URL} Ollama={OLLAMA_HOST}")
+    tts_is_remote = "127.0.0.1" not in TTS_URL and "localhost" not in TTS_URL
+    mode = "Swarm 分布式" if tts_is_remote else "K1 本地全功能"
+    logger.info(f"网关启动 [{mode}]: {args.host}:{args.port} | YOLO={YOLO_URL} ASR={ASR_URL} TTS={TTS_URL} Ollama={OLLAMA_HOST}")
     uvicorn.run(app, host=args.host, port=args.port,
                 ssl_keyfile=args.ssl_keyfile, ssl_certfile=args.ssl_certfile,
                 workers=1, log_level="info")

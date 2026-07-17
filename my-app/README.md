@@ -65,49 +65,49 @@ docker-compose.k1.yml       # 多容器编排
 # PC 端一键部署
 bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 
-# 或 K1 手动：
+# 或 K1 手动（本地全功能模式）：
 cd /home/bainbu/miao-xiu-k1-d
 cp /home/bainbu/miao-xiu-k1/best_fp16.onnx .       # 银饰模型
 cp /home/bainbu/miao-xiu-k1/clothesfp16.onnx .   # 服装模型
-docker compose -f docker-compose.k1.yml build
-docker compose -f docker-compose.k1.yml up -d
+docker compose --profile standalone up -d --build
 ```
 
 访问 `https://<K1_IP>:443`（自签名证书，浏览器点"高级→继续"）。
 
-### 静态单进程部署
+### Swarm 分布式部署
 
 ```bash
-# PC 端
-bash deploy/deploy-k1-docker.sh root@192.168.x.x static
+# K1 端（TTS 卸载到 PC，释放 ~1.5GB 内存）
+TTS_HOST=192.168.1.100 docker compose up -d --build
 
-# K1 手动：
-cd /home/bainbu/miao-xiu-k1
-pip install --break-system-packages -r server/requirements.txt
-pip install --break-system-packages \
-  --index-url https://git.spacemit.com/api/v4/projects/33/packages/pypi/simple \
-  spacemit-ort
-python3 server/board_server.py --port 8443
+# PC 端（仅 TTS 服务）
+docker compose --profile swarm-pc up -d --build
+
+# 切换回本地模式
+docker compose down
+docker compose --profile standalone up -d
 ```
+
+> 💡 **切换原理**：`TTS_HOST` 环境变量控制 TTS 路由。不设 = 本地 TTS，设 PC_IP = 远程 TTS。
 
 ### 容器管理
 
 ```bash
-docker compose -f docker-compose.k1.yml ps          # 查看状态
-docker compose -f docker-compose.k1.yml logs -f      # 全部日志
-docker compose -f docker-compose.k1.yml logs yolo    # 单容器日志
-docker compose -f docker-compose.k1.yml restart      # 重启全部
-docker compose -f docker-compose.k1.yml down         # 停止
+docker compose ps          # 查看状态
+docker compose logs -f      # 全部日志
+docker compose logs yolo    # 单容器日志
+docker compose restart      # 重启全部
+docker compose down         # 停止
 ```
 
 ### 按需启动
 
 ```bash
 # 仅目标检测 + 对话
-docker compose -f docker-compose.k1.yml up -d yolo gateway
+docker compose up -d yolo gateway
 
-# 仅语音功能
-docker compose -f docker-compose.k1.yml up -d asr tts gateway
+# 仅语音功能（需 PC TTS）
+TTS_HOST=192.168.1.100 docker compose up -d asr gateway
 ```
 
 ## API

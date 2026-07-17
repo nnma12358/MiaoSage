@@ -1,0 +1,168 @@
+# ============================================================
+# 苗绣·识裳 — 统一部署编排（K1 本地 ↔ Swarm 分布式自由切换）
+# ============================================================
+#
+#  本地全功能模式:
+#    docker compose --profile standalone up -d --build
+#
+#  Swarm 分布式 (K1 端):
+#    TTS_HOST=192.168.1.100 docker compose up -d --build
+#
+#  Swarm 分布式 (PC 端):
+#    docker compose --profile swarm-pc up -d --build
+#
+# ============================================================
+
+services:
+  # ========================
+  # 👁️ YOLO 检测（始终在 K1）
+  # ========================
+  yolo:
+    build:
+      context: .
+      dockerfile: Dockerfile.yolo
+    image: miao-sage:yolo
+    container_name: miao-yolo
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - YOLO_MODEL=${YOLO_MODEL:-yolov8n.onnx}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-4}
+    volumes:
+      - k1-cache:/root/.cache
+    deploy:
+      resources:
+        limits: { cpus: '3.0', memory: 1536M }
+        reservations: { cpus: '0.5', memory: 256M }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # 👂 ASR 语音识别（始终在 K1）
+  # ========================
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.asr
+    image: miao-sage:asr
+    container_name: miao-asr
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
+    volumes:
+      - k1-cache:/root/.cache
+      - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
+      - /usr/lib/libortextensions.so:/usr/lib/libortextensions.so:ro
+      - /usr/lib/libortextensions.so.0:/usr/lib/libortextensions.so.0:ro
+      - /usr/lib/libortextensions.so.0.12.0:/usr/lib/libortextensions.so.0.12.0:ro
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 1024M }
+        reservations: { cpus: '0.5', memory: 256M }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # 🗣️ TTS 语音合成 — K1 本地（仅 standalone 模式）
+  # ========================
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile.tts
+    image: miao-sage:tts
+    container_name: miao-tts
+    restart: unless-stopped
+    network_mode: host
+    profiles: ["standalone"]
+    environment:
+      - SPACEMIT_NLP_DIR=/opt/spacemit/nlp
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+    volumes:
+      - k1-cache:/root/.cache
+      - /home/bainbu/spacemit-demo/examples/NLP:/opt/spacemit/nlp:ro
+      - /usr/lib/libortextensions.so:/usr/lib/libortextensions.so:ro
+      - /usr/lib/libortextensions.so.0:/usr/lib/libortextensions.so.0:ro
+      - /usr/lib/libortextensions.so.0.12.0:/usr/lib/libortextensions.so.0.12.0:ro
+    deploy:
+      resources:
+        limits: { cpus: '3.0', memory: 2048M }
+        reservations: { cpus: '1.0', memory: 512M }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # 🚪 API 网关（始终在 K1）
+  # ========================
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.k1
+    image: miao-sage:gateway
+    container_name: miao-gateway
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    depends_on:
+      - yolo
+      - asr
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-}
+      - OLLAMA_MODEL_KEYWORDS=${OLLAMA_MODEL_KEYWORDS:-miao,qwen}
+      - YOLO_URL=http://127.0.0.1:8000
+      - ASR_URL=http://127.0.0.1:8001
+      # TTS_URL: 不设 TTS_HOST 则走本地，设了则走远程 PC
+      - TTS_URL=http://${TTS_HOST:-127.0.0.1}:8002
+    volumes:
+      - k1-cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://127.0.0.1:443/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 512M }
+        reservations: { cpus: '0.3', memory: 128M }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+  # ========================
+  # 🗣️ TTS 语音合成 — 远程 PC（仅 swarm-pc 模式）
+  # ========================
+  tts-pc:
+    build:
+      context: .
+      dockerfile: Dockerfile.swarm-pc
+    image: miao-sage:swarm-pc
+    container_name: miao-tts-pc
+    restart: unless-stopped
+    network_mode: host
+    profiles: ["swarm-pc"]
+    environment:
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-ZH}
+      - TTS_SPEAKER=${TTS_SPEAKER:-0}
+      - TTS_SPEED=${TTS_SPEED:-1.0}
+      - TTS_MAX_LEN=${TTS_MAX_LEN:-300}
+      - MELO_MODEL_DIR=/app/models
+    volumes:
+      - melo-models:/app/models
+    deploy:
+      resources:
+        limits: { cpus: '4.0', memory: 2048M }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
+
+volumes:
+  k1-cache:
+    name: miao-k1-cache
+  melo-models:
+    name: miao-melo-models
