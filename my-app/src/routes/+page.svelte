@@ -3197,36 +3197,313 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     letter-spacing: 0.03em;
   }
 
-  /* 响应式调整 */
-  @media (max-width: 900px) {
+  /* ==========================================
+     响应式设计 — 手机端 / 平板 / 桌面三分立
+     ========================================== */
+
+  /* ── 平板竖屏 (≤1024px)：双栏 + 底栏导航 ── */
+  @media (max-width: 1024px) {
     .main-layout {
       flex-direction: column;
     }
-    .panel-left, .panel-right {
-      width: 100%;
-      flex-shrink: 1;
-    }
     .panel-left {
+      width: 100%;
+      max-height: 42vh;
+      flex-shrink: 1;
       order: 1;
-      max-height: 45vh;
     }
     .panel-chat {
       order: 2;
       flex: 1;
+      min-height: 280px;
     }
     .panel-right {
+      width: 100%;
       order: 3;
-    }
-    .bottom-nav {
-      flex-wrap: wrap;
-      gap: 4px;
-    }
-    .nav-tab {
-      flex: 1 0 auto;
-      min-width: 60px;
+      max-height: 30vh;
+      overflow-y: auto;
     }
     .status-group {
       display: none;
+    }
+    .perf-panel {
+      gap: 8px;
+      font-size: 0.68rem;
+    }
+    .perf-panel .perf-mem,
+    .perf-panel .perf-temp {
+      display: none;
+    }
+    .ornate-frame {
+      margin-bottom: 6px;
+    }
+    .frame-corner svg {
+      width: 24px;
+      height: 24px;
+    }
+  }
+
+  /* ── 手机端 (≤768px)：单栏交互，触控优化 ── */
+  @media (max-width: 768px) {
+    .app-container {
+      border-left: none;
+      border-right: none;
+      border-radius: 0;
+    }
+    .app-container::after {
+      display: none;
+    }
+
+    /* 顶部导航压缩 */
+    .app-header {
+      margin: 0;
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+    }
+    .header-pattern-top,
+    .header-pattern-bottom {
+      height: 12px;
+    }
+    .header-pattern-top {
+      background-size: 120px 12px;
+    }
+    .header-main {
+      padding: 6px 10px;
+      gap: 6px;
+    }
+    .top-logo-text {
+      font-size: 0.9rem;
+      letter-spacing: 0.04em;
+    }
+    .ox-horn-icon svg {
+      width: 40px;
+      height: 20px;
+    }
+    .perf-panel {
+      gap: 6px;
+      font-size: 0.62rem;
+    }
+    .perf-item {
+      display: none;
+    }
+    .perf-item:first-child {
+      display: inline;  /* 仅保留 FPS */
+    }
+    .btn-qr, .btn-lang {
+      width: 28px;
+      height: 24px;
+      font-size: 0.6rem;
+    }
+
+    /* 单栏布局 — 面板切换 */
+    .main-layout {
+      flex-direction: column;
+      gap: 0;
+    }
+    .panel-left {
+      width: 100%;
+      max-height: 40vh;
+      order: 1;
+      padding: 8px;
+    }
+    .panel-chat {
+      order: 2;
+      flex: 1;
+      min-height: 300px;
+      padding: 8px;
+    }
+    .panel-right {
+      display: none;  /* 手机端隐藏侧栏，用底部快捷栏替代 */
+    }
+    .panel-title {
+      font-size: 0.78rem;
+      padding-bottom: 5px;
+      margin-bottom: 6px;
+    }
+
+    /* 取景框适配 */
+    .ornate-frame {
+      border-radius: 0;
+      border-left: none;
+      border-right: none;
+    }
+    .frame-corner {
+      display: none;
+    }
+    .frame-content {
+      aspect-ratio: 4/3;
+    }
+    .camera-label {
+      font-size: 0.6rem;
+      padding: 2px 8px;
+    }
+    .placeholder-hint {
+      font-size: 0.65rem;
+    }
+
+    /* 按钮触控优化 — 最小 44px 点击区域 */
+    .camera-actions {
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .btn-camera-main,
+    .btn-capture,
+    .btn-identify-main,
+    .btn-retake-main,
+    .btn-close-cam {
+      padding: 12px 14px;
+      font-size: 0.85rem;
+      min-height: 44px;
+      border-radius: 10px;
+    }
+
+    /* 聊天气泡 */
+    .bubble-content {
+      max-width: 88%;
+    }
+    .bubble-text {
+      font-size: 0.85rem;
+      padding: 10px 14px;
+    }
+    .chat-input input {
+      height: 44px;
+      font-size: 0.9rem;
+      border-radius: 22px;
+    }
+    .btn-send {
+      height: 44px;
+      padding: 0 20px;
+      font-size: 0.85rem;
+      border-radius: 22px;
+    }
+
+    /* 识别结果卡片 */
+    .result-card {
+      padding: 10px;
+    }
+    .badge-type {
+      font-size: 0.78rem;
+    }
+    .detail-row {
+      font-size: 0.7rem;
+    }
+
+    /* 底部导航 — 手机端主交互区 */
+    .bottom-nav {
+      padding: 2px 6px;
+      gap: 0;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .nav-tab {
+      padding: 6px 3px 4px;
+      gap: 2px;
+      min-width: 56px;
+      flex-shrink: 0;
+    }
+    .nav-tab .nav-icon {
+      font-size: 0.85rem;
+    }
+    .nav-tab .nav-label {
+      font-size: 0.58rem;
+      white-space: nowrap;
+    }
+
+    /* 语音栏 */
+    .voice-bar {
+      padding: 6px 10px;
+      gap: 8px;
+    }
+    .voice-btn {
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      min-height: 40px;
+    }
+    .voice-info {
+      display: none;
+    }
+    .btn-tts-toggle {
+      width: 32px;
+      height: 32px;
+      font-size: 1rem;
+    }
+
+    /* 欢迎卡片 */
+    .miao-girl-card {
+      padding: 16px 14px;
+      max-width: 100%;
+    }
+    .girl-avatar {
+      width: 64px;
+      height: 64px;
+    }
+    .girl-name {
+      font-size: 0.95rem;
+    }
+    .quick-cards {
+      grid-template-columns: 1fr;
+    }
+
+    /* 未识别提示 */
+    .unrecognized-card {
+      padding: 10px;
+    }
+    .unrecognized-title {
+      font-size: 0.8rem;
+    }
+
+    /* 二维码弹窗 */
+    .qr-modal {
+      padding: 20px 14px 16px;
+      max-width: 300px;
+    }
+    .qr-image-box {
+      width: 180px;
+      height: 180px;
+    }
+    .qr-title {
+      font-size: 0.85rem;
+    }
+  }
+
+  /* ── 极小屏 (≤400px) ── */
+  @media (max-width: 400px) {
+    .top-logo-text {
+      font-size: 0.78rem;
+    }
+    .panel-left {
+      max-height: 35vh;
+    }
+    .frame-content {
+      aspect-ratio: 1/1;
+    }
+    .chat-input input {
+      font-size: 0.8rem;
+    }
+    .btn-send {
+      font-size: 0.75rem;
+      padding: 0 14px;
+    }
+  }
+
+  /* ── 桌面宽屏 (≥1400px)：三栏宽松间距 ── */
+  @media (min-width: 1400px) {
+    .app-container {
+      max-width: 1600px;
+    }
+    .panel-left {
+      width: 360px;
+    }
+    .panel-right {
+      width: 280px;
+    }
+    .main-layout {
+      gap: 12px;
+    }
+    .ornate-frame {
+      border-width: 2px;
     }
   }
 </style>
