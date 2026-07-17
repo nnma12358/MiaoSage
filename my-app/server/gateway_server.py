@@ -12,7 +12,7 @@
   /health        全服务健康检查
   /stats         性能监控
 """
-import os, json, logging
+import os, json, logging, time
 from pathlib import Path
 
 import requests as http_requests
@@ -29,7 +29,80 @@ if not STATIC_DIR.exists():
     STATIC_DIR = Path(__file__).resolve().parent / "build"
 
 OLLAMA_HOST  = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-instruct")
+
+# ---- Ollama 模型自动发现（懒加载 + 缓存 + 可重试）----
+# 优先级: 环境变量 OLLAMA_MODEL > 关键字匹配(miao/qwen/...) > 首个可用 > 兜底
+# 缓存 60s，Ollama 未就绪时自动重试，避免启动顺序依赖
+
+_OLLAMA_MODEL_CACHE = None
+_OLLAMA_MODEL_CACHE_TIME = 0.0
+_MODEL_CACHE_TTL = 60.0  # 缓存有效期（秒）
+
+def _discover_ollama_model(host: str, force: bool = False) -> str:
+    """懒加载 Ollama 模型名，失败时自动重试"""
+    global _OLLAMA_MODEL_CACHE, _OLLAMA_MODEL_CACHE_TIME
+
+    # 1) 环境变量始终优先（不走缓存）
+    env_model = os.environ.get("OLLAMA_MODEL", "").strip()
+    if env_model:
+        logger.info(f"Ollama 模型: {env_model} (环境变量 OLLAMA_MODEL)")
+        return env_model
+
+    # 2) 命中缓存直接返回
+    now = time.time()
+    if not force and _OLLAMA_MODEL_CACHE and (now - _OLLAMA_MODEL_CACHE_TIME) < _MODEL_CACHE_TTL:
+        return _OLLAMA_MODEL_CACHE
+
+    # 3) 查询 Ollama 已注册模型
+    try:
+        r = http_requests.get(f"{host}/api/tags", timeout=5)
+        if r.status_code != 200:
+            raise ConnectionError(f"HTTP {r.status_code}")
+        models = [m["name"] for m in r.json().get("models", [])]
+        if not models:
+            raise ValueError("无已注册模型")
+
+        logger.info(f"Ollama 可用模型 ({len(models)}): {', '.join(models[:8])}{'...' if len(models) > 8 else ''}")
+
+        # 4) 按关键字优先级匹配（可通过 OLLAMA_MODEL_KEYWORDS 自定义）
+        keywords = os.environ.get("OLLAMA_MODEL_KEYWORDS", "miao,qwen").split(",")
+        for kw in keywords:
+            kw = kw.strip()
+            if not kw:
+                continue
+            matching = [m for m in models if kw.lower() in m.lower()]
+            if matching:
+                # 优先选不含 :latest 标签的
+                custom = [m for m in matching if ":latest" not in m]
+                selected = (custom or matching)[0]
+                logger.info(f"Ollama 模型: {selected} (匹配 '{kw}')")
+                _OLLAMA_MODEL_CACHE = selected
+                _OLLAMA_MODEL_CACHE_TIME = now
+                return selected
+
+        # 5) 无关键字匹配 → 返回首个可用模型
+        selected = models[0]
+        logger.info(f"Ollama 模型: {selected} (首个可用, 无关键字匹配)")
+        _OLLAMA_MODEL_CACHE = selected
+        _OLLAMA_MODEL_CACHE_TIME = now
+        return selected
+
+    except Exception as e:
+        logger.warning(f"无法查询 Ollama 模型列表: {e}")
+        # 6) 返回缓存旧值或兜底
+        fallback = _OLLAMA_MODEL_CACHE or "miao-qwen"
+        logger.warning(f"Ollama 模型: {fallback} (兜底)")
+        return fallback
+
+def get_ollama_model() -> str:
+    """获取当前 Ollama 模型名（线程安全懒加载）"""
+    return _discover_ollama_model(OLLAMA_HOST)
+
+def refresh_ollama_model() -> str:
+    """强制刷新模型发现缓存"""
+    return _discover_ollama_model(OLLAMA_HOST, force=True)
+
+OLLAMA_MODEL = get_ollama_model()  # 启动时尝试一次，失败不阻塞
 
 # 后端微服务地址（host 网络模式下用 localhost）
 YOLO_URL = os.environ.get("YOLO_URL", "http://127.0.0.1:8000")
@@ -38,14 +111,11 @@ TTS_URL  = os.environ.get("TTS_URL",  "http://127.0.0.1:8002")
 
 _ARCH = os.uname().machine
 
-SYSTEM_PROMPT = """你是"苗族阿妹"，苗族服饰文化专家。
-你精通苗族银饰、刺绣（苗绣）、蜡染、百鸟衣、
-银角头饰、银项圈、绣花围腰等传统服饰知识。
-请用亲切专业的口吻，适当引用苗族传说、历史、
-习俗回答用户问题。字数控制在200-500字。"""
+# 不再注入 system prompt — 由 Modelfile 的 SYSTEM 指令统一管理
+# 如需覆盖，设置环境变量 OLLAMA_SYSTEM_PROMPT
+_SYSTEM_PROMPT = os.environ.get("OLLAMA_SYSTEM_PROMPT", None)
 
 # ---- 性能监控（复用 perf.py 模块）----
-import time
 from perf import monitor, LatencyTracker, ConcurrencyGuard
 
 # 网关代理延迟追踪 & 各服务独立追踪
@@ -116,6 +186,34 @@ async def health():
         "memory_mb": monitor.memory_used_mb(),
     }
 
+# ---- /ollama/models ----  列出所有可用模型
+@app.get("/ollama/models")
+async def list_ollama_models():
+    """返回 Ollama 已注册的所有模型 + 当前选用"""
+    try:
+        r = http_requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        if r.status_code != 200:
+            raise HTTPException(502, f"Ollama 返回 {r.status_code}")
+        all_models = [m["name"] for m in r.json().get("models", [])]
+    except http_requests.ConnectionError:
+        raise HTTPException(503, "Ollama 服务不可达")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+    return {
+        "models": all_models,
+        "active": get_ollama_model(),
+        "count": len(all_models),
+    }
+
+# ---- /ollama/refresh ----  强制刷新模型发现
+@app.post("/ollama/refresh")
+async def refresh_ollama():
+    """强制重新发现 Ollama 模型（Ollama 重启后调用）"""
+    new_model = refresh_ollama_model()
+    logger.info(f"模型已刷新: {new_model}")
+    return {"model": new_model, "status": "refreshed"}
+
 # ---- /stats ----
 @app.get("/stats")
 async def stats():
@@ -146,27 +244,19 @@ async def stats():
         "llm_queue": llm_guard.stats(),
         "yolo_backend": yolo_backend,
         "yolo_models": yolo_models,
-        "ollama_model": OLLAMA_MODEL,
+        "ollama_model": get_ollama_model(),
         "proxy_latency": proxy_latency.stats(),
     }
 
 # ---- /detect → yolo:8000 ----
 @app.post("/detect")
-async def detect(
-    image: UploadFile = File(...),
-    mode: str = "silver",
-    person_filter: str = "true",
-):
+async def detect(image: UploadFile = File(...)):
     contents = await image.read()
     yolo_guard.enter()
     t0 = time.perf_counter()
     try:
         await yolo_guard.acquire()
-        # 转发 mode 和 person_filter 参数给 YOLO 后端
-        params = {"mode": mode, "person_filter": person_filter}
-        r = http_requests.post(
-            f"{YOLO_URL}/detect",
-            params=params,
+        r = http_requests.post(f"{YOLO_URL}/detect",
             files={"image": (image.filename or "img.jpg", contents, image.content_type or "image/jpeg")},
             timeout=60)
         elapsed = round((time.perf_counter() - t0) * 1000, 1)
@@ -235,9 +325,16 @@ async def chat(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     messages = body.get("messages", [])
-    ollama_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": False,
-               "options": {"temperature": 0.7, "top_p": 0.9}}
+    # K1 速优：仅保留最近 6 条消息（3 轮），防 prompt 膨胀
+    if len(messages) > 6:
+        messages = messages[-6:]
+    ollama_msgs = []
+    if _SYSTEM_PROMPT:
+        ollama_msgs.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_msgs += messages
+    payload = {"model": get_ollama_model(), "messages": ollama_msgs, "stream": False,
+               "options": {"num_ctx": 512}}
+    logger.info(f"→ Ollama /api/chat model={payload['model']} msgs={len(ollama_msgs)}")
     llm_guard.enter()
     t0 = time.perf_counter()
     try:
@@ -246,7 +343,11 @@ async def chat(request: Request):
         elapsed = round((time.perf_counter() - t0) * 1000, 1)
         llm_latency.record(elapsed)
         if r.status_code != 200:
-            raise HTTPException(502, f"Ollama 返回 {r.status_code}: {r.text[:200]}")
+            detail = r.text[:300]
+            logger.error(f"Ollama 错误 {r.status_code}: {detail}")
+            if "not found" in detail.lower():
+                raise HTTPException(502, f"模型 '{payload['model']}' 不存在。可用: GET /ollama/models")
+            raise HTTPException(502, f"Ollama 返回 {r.status_code}: {detail}")
         content = r.json().get("message", {}).get("content", "")
         return {"role": "assistant", "content": content}
     except http_requests.ConnectionError:
@@ -267,9 +368,15 @@ async def chat_stream(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     messages = body.get("messages", [])
-    ollama_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
-    payload = {"model": OLLAMA_MODEL, "messages": ollama_msgs, "stream": True,
-               "options": {"temperature": 0.7, "top_p": 0.9}}
+    # K1 速优：仅保留最近 6 条消息（3 轮），防 prompt 膨胀
+    if len(messages) > 6:
+        messages = messages[-6:]
+    ollama_msgs_chat = []
+    if _SYSTEM_PROMPT:
+        ollama_msgs_chat.append({"role": "system", "content": _SYSTEM_PROMPT})
+    ollama_msgs_chat += messages
+    payload = {"model": get_ollama_model(), "messages": ollama_msgs_chat, "stream": True,
+               "options": {"num_ctx": 512}}
 
     async def generate():
         yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
