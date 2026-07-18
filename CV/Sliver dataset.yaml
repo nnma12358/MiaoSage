@@ -1,5 +1,0 @@
-path: /mnt/d/Desktop/苗族银器promax
-train: images/train
-val: images/val
-nc: 6
-names: ['全包式银花帽', '平顶花丝银头冠', '立柱花丝银头冠', '银压领', '雕花弯形银牛角冠', '黑苗银锁']
