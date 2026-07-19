@@ -32,6 +32,8 @@ let ttsEnabled = $state(true);       // TTS 语音播报开关
 let micStream = null;                // 录音媒体流
 let showQRCode = $state(false);      // 二维码弹窗
 let qrCodeDataUrl = $state('');      // 二维码 DataURL
+let isMobile = false;                // 移动端检测（一次性，不需要 $state）
+let fileInputElement;                // 移动端隐藏文件输入（调用原生相机）
 
   // --- 语言切换 ---
   let lang = $state('zh');  // 'zh' | 'en'
@@ -387,6 +389,14 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
   });
 
   async function openCamera() {
+    // 移动端：调用原生照相机应用（无需实时预览）
+    if (isMobile) {
+      if (fileInputElement) {
+        fileInputElement.value = '';  // 清空上次选择，确保 change 事件触发
+        fileInputElement.click();
+      }
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 640, height: 480, facingMode: 'environment' } 
@@ -402,6 +412,21 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       cameraActive = false;
       pendingStream = null;
     }
+  }
+
+  // 移动端原生相机拍照回调
+  function handleMobilePhoto(event) {
+    const file = event.target?.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      capturedImage = e.target.result;
+      detectedPatterns = [];
+      recognitionFailed = false;
+      recognitionDone = false;
+      identificationResult = null;
+    };
+    reader.readAsDataURL(file);
   }
 
   function closeCamera() {
@@ -622,7 +647,12 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     recognitionFailed = false;
     recognitionDone = false;
     detectedPatterns = [];
-    openCamera();
+    // 移动端重新调用原生相机，桌面端重新打开摄像头
+    if (isMobile) {
+      fileInputElement?.click();
+    } else {
+      openCamera();
+    }
   }
 
   // --- 对话功能 ---
@@ -722,9 +752,10 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     cancelStream();
 
     streamAbortController = new AbortController();
-    isStreaming = true;
     streamingText = '';
+    // 先显示加载气泡（思考动画），等网络响应到达后再切换到流式气泡
     isLoading = true;
+    // isStreaming 在拿到响应后再置 true
 
     try {
       const response = await fetch(LLM_STREAM_URL, {
@@ -737,6 +768,9 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       if (!response.ok) {
         throw new Error(`LLM 流式接口错误: ${response.status}`);
       }
+
+      // 响应到达，切换为流式气泡
+      isStreaming = true;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -759,7 +793,10 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
           if (payload === '[DONE]') break;
           try {
             const parsed = JSON.parse(payload);
-            if (parsed.content) {
+            if (parsed.replace) {
+              // 幻觉检测触发替换 → 清空已流式输出的文本，替换为安全回退语
+              streamingText = parsed.content;
+            } else if (parsed.content) {
               streamingText += parsed.content;
             }
             if (parsed.error) {
@@ -931,11 +968,28 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
   // ================================================================
   async function speakText(text) {
     if (!ttsEnabled || !text || !audioElement) return;
-    // 提取纯文本（去除 HTML 标签等）
-    const plain = text.replace(/<[^>]*>/g, '').replace(/&[^;]+;/g, '').trim();
+    // 清洗 Markdown/HTML，提取纯中文口语文本
+    let plain = text
+      .replace(/<[^>]*>/g, '')           // HTML 标签
+      .replace(/&[^;]+;/g, '')           // HTML 实体
+      .replace(/[""]/g, '"')             // 智能引号 → 直引号（MeloTTS 兼容）
+      .replace(/['']/g, "'")             // 智能单引号
+      .replace(/[《》〈〉「」『』【】〖〗«»]/g, '')  // 书名号/括号类（保留内部文字）
+      .replace(/[;；:：]/g, '，')          // 分号/冒号 → 逗号（MeloTTS 兼容）
+      .replace(/[…‥]/g, '。')            // 省略号 → 句号
+      .replace(/[—–～〜]/g, '，')        // 破折号/波浪线 → 逗号
+      .replace(/\*\*(.+?)\*\*/g, '$1')   // **粗体**
+      .replace(/^#{1,4}\s+/gm, '')       // ### 标题
+      .replace(/^[-*]\s+/gm, '')         // - 无序列表
+      .replace(/^\d+\.\s+/gm, '')        // 1. 有序列表
+      .replace(/[*_~`]/g, '')            // 残余标记符号
+      .replace(/\n{2,}/g, '。')          // 双换行→句号
+      .replace(/\n/g, '，')              // 单换行→逗号
+      .replace(/\s+/g, '')               // 多余空白
+      .trim();
     if (!plain) return;
-    // 截断到 500 字，避免 TTS 模型超负载
-    const short = plain.length > 500 ? plain.substring(0, 500) : plain;
+    // 截断到 800 字，避免 TTS 模型超负载
+    const short = plain.length > 800 ? plain.substring(0, 800) : plain;
 
     try {
       const resp = await fetch('/tts', {
@@ -946,10 +1000,33 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
-        // 释放旧 URL（避免内存泄漏）
         const oldSrc = audioElement.src;
-        audioElement.src = url;
-        // 首次播放前尝试解锁浏览器音频策略
+
+        // 等待音频完全加载后再播放，防止中途截断
+        await new Promise((resolve, reject) => {
+          audioElement.src = url;
+          audioElement.load();
+          let resolved = false;
+          const done = (err) => {
+            if (resolved) return;
+            resolved = true;
+            audioElement.removeEventListener('canplaythrough', onReady);
+            audioElement.removeEventListener('error', onError);
+            audioElement.removeEventListener('loadeddata', onReady);
+            if (err) reject(err); else resolve();
+          };
+          const onReady = () => {
+            // canplaythrough 可能过早触发，确认 readyState >= 3 再放行
+            if (audioElement.readyState >= 3) done();
+          };
+          const onError = (e) => done(e);
+          audioElement.addEventListener('canplaythrough', onReady);
+          audioElement.addEventListener('loadeddata', onReady);
+          audioElement.addEventListener('error', onError);
+          // 超时保护：3s 后强制播放
+          setTimeout(() => done(), 3000);
+        });
+
         if (!audioUnlocked) {
           try { await audioElement.play(); audioUnlocked = true; } catch { /* 等用户交互 */ }
         }
@@ -986,6 +1063,9 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
 
   // --- 生命周期 ---
   onMount(() => {
+    // 移动端检测
+    isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) ||
+               ('ontouchstart' in window && window.innerWidth < 1024);
     startFpsMonitor();
     startCpuMonitor();
     // 欢迎消息
@@ -1158,7 +1238,23 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
 
         <!-- 框内主内容 -->
         <div class="frame-content">
-          {#if cameraActive}
+          {#if isMobile}
+            <!-- ── 移动端：无实时取景框，仅拍摄按钮 + 照片预览 ── -->
+            {#if capturedImage}
+              <div class="mobile-preview-wrapper" transition:scale={{ duration: 350, easing: quintOut }}>
+                <img src={capturedImage} alt="拍摄的服饰图片" />
+                <div class="mobile-preview-badge">{t.capturedLabel[lang]}</div>
+              </div>
+            {:else}
+              <div class="mobile-camera-placeholder">
+                <button class="btn-mobile-capture-main" onclick={openCamera}>
+                  <svg viewBox="0 0 24 24" width="28" height="28"><rect x="2" y="6" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+                  <span>{lang === 'zh' ? '拍照识别' : 'Take Photo'}</span>
+                </button>
+                <p class="mobile-camera-hint">{t.aimLens[lang]}</p>
+              </div>
+            {/if}
+          {:else if cameraActive}
             <div class="camera-popup-inner" transition:scale={{ duration: 350, easing: elasticOut }}>
               <video bind:this={videoElement} autoplay playsinline muted></video>
               <canvas
@@ -1223,7 +1319,7 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
         {#if !cameraActive && !capturedImage}
           <button class="btn-camera-main" onclick={openCamera}>
             <svg viewBox="0 0 24 24" width="20" height="20"><rect x="2" y="6" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 4 L8.5 2 L15.5 2 L17 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            {t.identifyBtn[lang]}
+            {isMobile ? (lang === 'zh' ? '拍照' : 'Photo') : t.identifyBtn[lang]}
           </button>
         {:else if cameraActive}
           <button class="btn-capture" onclick={captureFrame}>
@@ -1280,6 +1376,8 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       {/if}
       
       <canvas bind:this={canvasElement} class="hidden-canvas"></canvas>
+      <!-- 移动端原生相机：隐藏文件输入 -->
+      <input type="file" bind:this={fileInputElement} accept="image/*" class="hidden-input" onchange={handleMobilePhoto} />
       <!-- 隐藏音频元素：TTS 语音播报 -->
       <audio bind:this={audioElement} class="hidden-audio" preload="none"></audio>
     </aside>
@@ -1383,19 +1481,21 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
           {#if isLoading && !isStreaming}
             <div class="chat-bubble assistant loading-bubble" in:fly={{ y: 20, duration: 400, easing: quintOut }}>
               <div class="bubble-avatar">
-                <div class="avatar ai">
+                <div class="avatar ai thinking">
                   <svg viewBox="0 0 24 24" width="14" height="14"><path d="M8 16 C4 8 10 2 12 2 C14 2 20 8 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
                 </div>
               </div>
               <div class="bubble-content">
                 <div class="bubble-header">
                   <span class="bubble-role">{t.aiAssistant[lang]}</span>
-                  <span class="bubble-time">...</span>
+                  <span class="bubble-time">{lang === 'zh' ? '思考中…' : 'Thinking…'}</span>
                 </div>
                 <div class="bubble-text loading">
-                  <span class="dot">●</span>
-                  <span class="dot">●</span>
-                  <span class="dot">●</span>
+                  <span class="loading-dots">
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -1593,6 +1693,10 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     @keyframes fadeIn {
       from { opacity: 0; }
       to   { opacity: 1; }
+    }
+    @keyframes avatarGlow {
+      0%, 100% { box-shadow: 0 0 6px rgba(94, 207, 209, 0.3); }
+      50% { box-shadow: 0 0 16px rgba(94, 207, 209, 0.7); }
     }
   }
 
@@ -2306,6 +2410,14 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     display: none;
   }
 
+  .hidden-input {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+  }
+
   .hidden-audio {
     position: absolute;
     left: -9999px;
@@ -2657,12 +2769,28 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
     min-width: 56px;
     padding: 10px 20px;
   }
-  .dot {
-    font-size: 0.5rem;
+  .loading-dots {
+    display: flex;
+    gap: 6px;
+  }
+  .loading-dots .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.7);
     animation: dotBounce 1.4s infinite ease-in-out;
   }
-  .dot:nth-child(2) { animation-delay: 0.2s; }
-  .dot:nth-child(3) { animation-delay: 0.4s; }
+  .loading-dots .dot:nth-child(2) { animation-delay: 0.2s; }
+  .loading-dots .dot:nth-child(3) { animation-delay: 0.4s; }
+
+  /* 思考中头像呼吸光晕 */
+  .avatar.ai.thinking {
+    animation: avatarGlow 1.5s ease-in-out infinite;
+  }
+  @keyframes avatarGlow {
+    0%, 100% { box-shadow: 0 0 6px rgba(94, 207, 209, 0.3); }
+    50% { box-shadow: 0 0 16px rgba(94, 207, 209, 0.7); }
+  }
 
   /* 打字机光标闪烁 */
   .cursor-blink {
@@ -3278,25 +3406,27 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       font-size: 0.6rem;
     }
 
-    /* 单栏布局 — 面板切换 */
+    /* 单栏布局 — 聊天优先，相机压缩 */
     .main-layout {
       flex-direction: column;
       gap: 0;
     }
     .panel-left {
       width: 100%;
-      max-height: 40vh;
+      max-height: none;
+      flex-shrink: 0;
       order: 1;
-      padding: 8px;
+      padding: 6px 8px;
+      overflow-y: visible;
     }
     .panel-chat {
       order: 2;
       flex: 1;
-      min-height: 300px;
-      padding: 8px;
+      min-height: 320px;
+      padding: 6px 8px;
     }
     .panel-right {
-      display: none;  /* 手机端隐藏侧栏，用底部快捷栏替代 */
+      display: none;  /* 手机端隐藏侧栏 */
     }
     .panel-title {
       font-size: 0.78rem;
@@ -3304,30 +3434,99 @@ let qrCodeDataUrl = $state('');      // 二维码 DataURL
       margin-bottom: 6px;
     }
 
-    /* 取景框适配 */
+    /* 移动端：隐藏华丽取景框，改为紧凑相机区 */
     .ornate-frame {
+      background: none;
+      border: none;
       border-radius: 0;
-      border-left: none;
-      border-right: none;
+      box-shadow: none;
+      margin-bottom: 4px;
+      padding: 0;
     }
     .frame-corner {
       display: none;
     }
     .frame-content {
-      aspect-ratio: 4/3;
+      aspect-ratio: auto;
+      background: transparent;
+      min-height: 0;
     }
+
+    /* 移动端相机占位 */
+    .mobile-camera-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 0;
+    }
+    .btn-mobile-capture-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 28px;
+      background: linear-gradient(145deg, #c0a86a, #8a7040);
+      border: none;
+      border-radius: 24px;
+      color: #0a1220;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(192, 168, 106, 0.35);
+      transition: all 0.25s;
+      min-height: 48px;
+    }
+    .btn-mobile-capture-main:active {
+      transform: scale(0.96);
+    }
+    .mobile-camera-hint {
+      font-size: 0.68rem;
+      color: #4a6a8a;
+      margin: 0;
+    }
+
+    /* 移动端照片预览 */
+    .mobile-preview-wrapper {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(74, 110, 140, 0.3);
+    }
+    .mobile-preview-wrapper img {
+      width: 100%;
+      display: block;
+      max-height: 180px;
+      object-fit: cover;
+    }
+    .mobile-preview-badge {
+      position: absolute;
+      bottom: 6px;
+      right: 6px;
+      background: rgba(0,0,0,0.7);
+      color: #7aaccc;
+      font-size: 0.6rem;
+      padding: 2px 8px;
+      border-radius: 8px;
+    }
+
+    /* 隐藏桌面端实时取景元素 */
+    .camera-popup-inner,
+    .viewfinder-grid,
+    .preview-image-wrapper,
+    .preview-overlay-label,
+    .frame-placeholder {
+      display: none;
+    }
+
     .camera-label {
       font-size: 0.6rem;
       padding: 2px 8px;
-    }
-    .placeholder-hint {
-      font-size: 0.65rem;
     }
 
     /* 按钮触控优化 — 最小 44px 点击区域 */
     .camera-actions {
       gap: 6px;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .btn-camera-main,
     .btn-capture,

@@ -115,6 +115,9 @@ _ARCH = os.uname().machine
 # 如需覆盖，设置环境变量 OLLAMA_SYSTEM_PROMPT
 _SYSTEM_PROMPT = os.environ.get("OLLAMA_SYSTEM_PROMPT", None)
 
+# ---- 幻觉过滤器 ----
+from hallucination_filter import filter_response, filter_stream_chunks
+
 # ---- 性能监控（复用 perf.py 模块）----
 from perf import monitor, LatencyTracker, ConcurrencyGuard
 
@@ -349,8 +352,8 @@ async def chat(request: Request):
     if _SYSTEM_PROMPT:
         ollama_msgs.append({"role": "system", "content": _SYSTEM_PROMPT})
     ollama_msgs += messages
-    payload = {"model": get_ollama_model(), "messages": ollama_msgs, "stream": False,
-               "options": {"num_ctx": 768, "num_predict": 150, "num_thread": 4}}
+    # 不传 options，信任 Modelfile 的 PARAMETER 设置（速度优化）
+    payload = {"model": get_ollama_model(), "messages": ollama_msgs, "stream": False}
     logger.info(f"→ Ollama /api/chat model={payload['model']} msgs={len(ollama_msgs)}")
     llm_guard.enter()
     t0 = time.perf_counter()
@@ -365,7 +368,9 @@ async def chat(request: Request):
             if "not found" in detail.lower():
                 raise HTTPException(502, f"模型 '{payload['model']}' 不存在。可用: GET /ollama/models")
             raise HTTPException(502, f"Ollama 返回 {r.status_code}: {detail}")
-        content = r.json().get("message", {}).get("content", "")
+        raw_content = r.json().get("message", {}).get("content", "")
+        # 应用层幻觉过滤
+        content = filter_response(raw_content)
         return {"role": "assistant", "content": content}
     except http_requests.ConnectionError:
         llm_guard.error()
@@ -392,11 +397,12 @@ async def chat_stream(request: Request):
     if _SYSTEM_PROMPT:
         ollama_msgs_chat.append({"role": "system", "content": _SYSTEM_PROMPT})
     ollama_msgs_chat += messages
-    payload = {"model": get_ollama_model(), "messages": ollama_msgs_chat, "stream": True,
-               "options": {"num_ctx": 768, "num_predict": 150, "num_thread": 4}}
+    # 不传 options，信任 Modelfile 的 PARAMETER 设置（速度优化）
+    payload = {"model": get_ollama_model(), "messages": ollama_msgs_chat, "stream": True}
 
     async def generate():
         yield f"data: {json.dumps({'status': 'thinking'})}\n\n"
+        chunks = []
         try:
             r = http_requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, stream=True, timeout=120)
             for line in r.iter_lines(decode_unicode=True):
@@ -406,8 +412,19 @@ async def chat_stream(request: Request):
                 except json.JSONDecodeError:
                     continue
                 if "message" in d and "content" in d["message"]:
-                    yield f"data: {json.dumps({'content': d['message']['content']})}\n\n"
+                    chunk = d["message"]["content"]
+                    chunks.append(chunk)
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
                 if d.get("done"): break
+
+            # 流式传输完成后，对完整文本做幻觉检测
+            full_text = "".join(chunks)
+            filtered, was_replaced = filter_stream_chunks(chunks)
+            if was_replaced:
+                logger.info(f"SSE 幻觉已拦截 → 回退")
+                # 发送替换事件，前端可用此标志替换整个消息
+                yield f"data: {json.dumps({'replace': True, 'content': filtered})}\n\n"
+
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"

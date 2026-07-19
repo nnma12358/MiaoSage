@@ -93,7 +93,7 @@ services:
       # ASR 留在 K1 本机，TTS 指向 PC
       - YOLO_URL=http://127.0.0.1:8000
       - ASR_URL=http://127.0.0.1:8001
-      - TTS_URL=http://${PC_IP:-192.168.1.100}:8002
+      - TTS_URL=http://${PC_IP:-10.235.6.90}:8002
     volumes:
       - k1-cache:/root/.cache
     profiles:
@@ -115,10 +115,7 @@ services:
   # PC — MeloTTS 语音合成
   # ========================
   tts-pc:
-    build:
-      context: .
-      dockerfile: Dockerfile.swarm-pc
-    image: miao-sage:swarm-pc
+    image: miao-sage:swarm-pc-final
     container_name: miao-tts-pc
     restart: unless-stopped
     network_mode: host
