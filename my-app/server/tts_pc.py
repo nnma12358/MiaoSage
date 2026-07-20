@@ -35,6 +35,58 @@ from fastapi.responses import FileResponse, Response
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("tts-melo")
 
+# ============================================================
+# Monkey-patch: 阻止 MeCab 在导入时崩溃
+# melo/text/japanese.py 在模块级别执行 MeCab.Tagger()，
+# unidic 词典缺失会抛出 RuntimeError → 中文 TTS 也被连带崩溃。
+# 中文 TTS 使用 jieba 分词，完全不依赖 MeCab/fugashi。
+# ============================================================
+import sys as _sys
+import types as _types
+if "MeCab" not in _sys.modules:
+    _dummy_mecab = _types.ModuleType("MeCab")
+    class _DummyTagger:
+        def __init__(self, *args, **kwargs): pass
+        def parse(self, text): return text
+    _dummy_mecab.Tagger = _DummyTagger
+    _sys.modules["MeCab"] = _dummy_mecab
+    logger.info("MeCab monkey-patched (Chinese TTS does not require unidic)")
+else:
+    _sys.modules["MeCab"].Tagger = type("Tagger", (), {
+        "__init__": lambda self, *a, **k: None,
+        "parse": lambda self, text: text,
+    })
+    logger.info("MeCab Tagger forcefully replaced")
+
+# ============================================================
+# 拦截日语模块 — japanese.py 在模块级别调用 AutoTokenizer.from_pretrained()
+# 会尝试下载 bert-base-japanese-v3，容器无法访问 HuggingFace。
+# 用最小 stub 替换整个日语模块，阻止崩溃。
+# ============================================================
+_jp_stub = _types.ModuleType("melo.text.japanese")
+_jp_stub.text_normalize = lambda t: t
+_jp_stub.g2p = lambda t: ([], [], [])
+_jp_stub.get_bert_feature = lambda *a, **k: None
+def _distribute_phone(n_phone, n_word):
+    phones_per_word = [0] * n_word
+    for task in range(n_phone):
+        min_tasks = min(phones_per_word)
+        min_index = phones_per_word.index(min_tasks)
+        phones_per_word[min_index] += 1
+    return phones_per_word
+_jp_stub.distribute_phone = _distribute_phone
+_sys.modules["melo.text.japanese"] = _jp_stub
+logger.info("Japanese text module stubbed")
+
+# 英文 BERT 模型已预下载到容器 /root/.cache/huggingface/hub/
+logger.info("BERT models preloaded from host (offline mode)")
+
+# NLTK 禁用下载，使用预拷贝的 cmudict（从 MeloTTS 源码提供）
+import nltk as _nltk
+_nltk.data.path = ["/root/nltk_data"]
+_nltk.download = lambda *a, **k: False
+logger.info("NLTK configured (offline, cmudict preloaded)")
+
 
 def _detect_device() -> str:
     """自动检测最优推理设备：CUDA > MPS > CPU"""
@@ -71,34 +123,91 @@ _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 def _normalize_tts_text(text: str) -> str:
     """归一化 TTS 输入文本，清除 MeloTTS 无法发音的特殊字符。
 
-    MeloTTS / VITS 对以下字符可能静默跳过，导致"片段文字丢失"：
-      - 《》〈〉「」『』【】〖〗（书名号、括号类）
-      - … ‥ （省略号）
-      - — – （破折号）
-      - ～ 〜 （波浪线）
-      - ；：！？ （全角标点 — MeloTTS 无法处理，静默跳过整段）
-      - 〝 〞 （着重号）
-      - 全角英文字母／数字（归一化为半角）
+    MeloTTS chinese.py 的 rep_map 仅映射了约 20 个标点符号。
+    任何不在 rep_map 中的字符（如 markdown **, /, `, - 列表标记）
+    会被 pypinyin 处理时产生空音素 → 整段静音。
+
+    本函数在文本进入 MeloTTS 之前做彻底清理。
     """
-    # 1. 全角标点 → 逗号（；：会导致 MeloTTS 静默跳过后续整段文字）
+    # 1. Markdown 格式清理（必须在标点处理之前）
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)   # **粗体** → 粗体
+    text = re.sub(r'\*(.+?)\*', r'\1', text)        # *斜体* → 斜体
+    text = re.sub(r'`(.+?)`', r'\1', text)           # `代码` → 代码
+    text = re.sub(r'~~(.+?)~~', r'\1', text)         # ~~删除线~~ → 删除线
+    # 2. 列表标记 → 删除（编号列表、无序列表）
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)   # - * + 列表
+    text = re.sub(r'^\s*\d+[\.\、\)]\s*', '', text, flags=re.MULTILINE)  # 1. 2、3) 编号
+    # 3. 特殊符号 → 中文连接词
+    text = text.replace('/', '或')     # 腰带/裤 → 腰带或裤
+    text = text.replace('\\', '或')    # 反斜杠
+    text = re.sub(r'[*#_~|]', '', text)  # 残留 markdown 符号 → 删除
+    # 4. 箭头、特殊符号 → 删除
+    text = re.sub(r'[→←↑↓↔⇒⇐⇑⇓➔➤▶▷◀◁●○◆◇■□▲△▼▽✓✗]', '', text)
+    # 5. 全角标点 → 逗号（；：会导致 MeloTTS 静默跳过后续整段文字）
     text = re.sub(r'[;；]', '\uff0c', text)   # 分号 → 逗号
     text = re.sub(r'[:：]', '\uff0c', text)   # 冒号 → 逗号
-    # 2. 书名号、括号类 → 删除（保留内部文字）
+    # 6. 书名号、括号类 → 删除（保留内部文字）
     text = re.sub(r'[《》〈〉「」『』【】〖〗〝〞]', '', text)
-    # 3. 省略号 → 句号
+    # 7. 省略号 → 句号
     text = re.sub(r'[…‥]', '\u3002', text)
-    # 4. 破折号、波浪线 → 逗号
+    # 8. 破折号、波浪线 → 逗号
     text = re.sub(r'[—–～〜]', '\uff0c', text)
-    # 5. 全角英文字母 → 半角（MeloTTS 对全角英文支持不稳定）
+    # 9. 全角英文字母 → 半角（MeloTTS 对全角英文支持不稳定）
     text = re.sub(r'[Ａ-Ｚ]', lambda m: chr(ord(m.group()) - 0xFEE0), text)
     text = re.sub(r'[ａ-ｚ]', lambda m: chr(ord(m.group()) - 0xFEE0), text)
-    # 6. 全角数字 → 半角
+    # 10. 全角数字 → 半角
     text = re.sub(r'[０-９]', lambda m: chr(ord(m.group()) - 0xFEE0), text)
-    # 7. 连续标点去重（超过2个相同标点 → 保留1个）
+    # 11. 连续标点去重（超过 2 个相同标点 → 保留 1 个）
     text = re.sub(r'([\u3002\uff0c\uff01\uff1f\u3001])\1{2,}', r'\1', text)
-    # 8. 清理不可见控制字符
+    # 12. 连续换行 → 单个句号
+    text = re.sub(r'\n{2,}', '\u3002', text)
+    text = re.sub(r'\n', '，', text)
+    # 13. 清理不可见控制字符
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    # 14. 末尾无标点 → 补句号
+    text = text.strip()
+    if text and text[-1] not in '\u3002\uff0c\uff01\uff1f\u3001':
+        text += '\u3002'
     return text
+
+
+def _chunk_text(text: str, max_chars: int = 80) -> list[str]:
+    """将长文本按句子边界分割为短块，避免 MeloTTS 单次合成过长导致静音。
+
+    MeloTTS/VITS 对单次输入长度敏感：超过约 100 字可能产生音素对齐错误
+    或模型注意力崩溃，导致后半段静音。分句合成可隔离故障范围。
+    """
+    # 按句末标点分割
+    sentences = re.split(r'(?<=[\u3002\uff01\uff1f\u2026])', text)
+    chunks = []
+    current = ''
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        if len(current) + len(sent) <= max_chars:
+            current += sent
+        else:
+            if current:
+                chunks.append(current)
+            # 如果单个句子就超过 max_chars，按逗号再切
+            if len(sent) > max_chars:
+                sub_chunks = re.split(r'(?<=[\uff0c\u3001])', sent)
+                sub = ''
+                for sc in sub_chunks:
+                    if len(sub) + len(sc) <= max_chars:
+                        sub += sc
+                    else:
+                        if sub:
+                            chunks.append(sub)
+                        sub = sc
+                if sub:
+                    chunks.append(sub)
+            else:
+                current = sent
+    if current:
+        chunks.append(current)
+    return chunks if chunks else [text]
 
 
 def _trim_wav_leading_silence(wav_bytes: bytes, max_trim_sec: float = 0.20,
@@ -178,6 +287,47 @@ def _trim_wav_leading_silence(wav_bytes: bytes, max_trim_sec: float = 0.20,
     return trimmed
 
 
+def _concat_wav_files(wav_list: list[bytes]) -> bytes:
+    """拼接多个 WAV 音频数据，保持采样率和位深度一致。"""
+    if not wav_list:
+        return b''
+    if len(wav_list) == 1:
+        return wav_list[0]
+
+    # 以第一个文件为基准
+    with wave.open(io.BytesIO(wav_list[0]), 'rb') as base:
+        params = base.getparams()
+        base_frames = base.readframes(base.getnframes())
+
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as out:
+        out.setparams(params)
+        out.writeframes(base_frames)
+        for i, wav_bytes in enumerate(wav_list[1:], 1):
+            try:
+                with wave.open(io.BytesIO(wav_bytes), 'rb') as wf:
+                    if wf.getparams().framerate != params.framerate:
+                        logger.warning(f"WAV chunk {i} sample rate mismatch, skipping")
+                        continue
+                    out.writeframes(wf.readframes(wf.getnframes()))
+            except Exception as e:
+                logger.warning(f"WAV chunk {i} corrupt, skipping: {e}")
+    return buf.getvalue()
+
+
+def _is_silent_wav(wav_bytes: bytes, threshold: int = 50) -> bool:
+    """检测 WAV 音频是否近乎全静音。阈值 50，避免误判短句。"""
+    try:
+        data = wav_bytes[44:]  # 跳过 44 字节 WAV 头
+        if len(data) < 50:     # 极短音频视为无效
+            return True
+        max_amp = max(abs(int.from_bytes(data[i:i+2], 'little', signed=True))
+                      for i in range(0, len(data) - 1, 2))
+        return max_amp < threshold
+    except Exception:
+        return True
+
+
 class MeloTTS:
     """MeloTTS 封装 — 惰性加载、线程安全、自动 GPU 检测"""
 
@@ -201,64 +351,75 @@ class MeloTTS:
         logger.info(f"MeloTTS model loaded (device={self._device}, speakers={n_speakers})")
 
     async def synthesize(self, text: str) -> str:
-        """异步合成入口，返回 WAV 文件路径"""
+        """异步合成入口 — 分句合成，隔离静音故障。
+
+        策略: 将文本按句子边界切分为短块（≤80字/块），逐块合成，
+        跳过静音块，最后拼接所有有效音频。避免单个 markdown 残留字符
+        导致整段静音。
+        """
         text = text.strip()
         if not text:
             raise ValueError("text is empty")
 
-        # 归一化文本：清除 MeloTTS 无法发音的特殊字符
+        # 归一化文本：清除 markdown、列表标记、特殊符号等
         text = _normalize_tts_text(text)
         if not text.strip():
             raise ValueError("text empty after normalization")
 
-        # 短文本补齐：MeloTTS 对极短文本（< 6 字）可能静音
-        MIN_TTS_LEN = 6
+        # 短文本补齐（用有实际内容的填充句，避免纯句号导致静音）
+        MIN_TTS_LEN = 8
         if len(text) < MIN_TTS_LEN:
-            pad_needed = MIN_TTS_LEN - len(text)
-            text = text + "。" * pad_needed
-            logger.info(f"Text padded to {MIN_TTS_LEN} chars (was {len(text) - pad_needed})")
+            text = text + "，苗族文化源远流长。"
+            logger.info(f"Text padded to {len(text)} chars")
 
-        if len(text) > TTS_MAX_LEN:
-            # 按句子边界截断，避免切在逗号中间导致后半句丢失
-            truncated = text[:TTS_MAX_LEN]
-            # 在最后一个句号/问号/感叹号处截断
-            last_period = max(
-                truncated.rfind('\u3002'),  # 。
-                truncated.rfind('\uff0c'),  # ，
-                truncated.rfind('\uff01'),  # ！
-                truncated.rfind('\uff1f'),  # ？
-            )
-            if last_period > TTS_MAX_LEN * 0.6:  # 至少保留60%长度
-                text = truncated[:last_period + 1]
-                logger.info(f"Text truncated at sentence boundary ({len(text)} chars)")
-            else:
-                text = truncated
-                logger.warning(f"Text hard-truncated ({len(text)} -> {TTS_MAX_LEN})")
+        # 分句
+        chunks = _chunk_text(text, max_chars=80)
+        logger.info(f"TTS chunked: {len(chunks)} segments, total {len(text)} chars")
 
-        logger.info(f"TTS [MeloTTS] len={len(text)}: {text[:60]}...")
-
+        # 逐块合成
         loop = asyncio.get_running_loop()
-        out_path = await loop.run_in_executor(_thread_pool, self._synthesize_sync, text)
+        valid_wavs = []
+        for i, chunk in enumerate(chunks):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            if len(chunk) < 3:
+                continue  # 太短的片段跳过
 
-        # 仅裁剪开头纯静音（阈值极低 50，最大 0.2s，不依赖 warmup）
-        try:
-            with open(out_path, "rb") as f:
-                raw = f.read()
-            trimmed = _trim_wav_leading_silence(raw)
-            with open(out_path, "wb") as f:
-                f.write(trimmed)
+            try:
+                out_path = await loop.run_in_executor(_thread_pool, self._synthesize_sync, chunk)
 
-            # 音频静音检测：若输出近乎全静音，记录警告便于排查
-            wav_samples = trimmed[44:]  # 跳过 WAV 头
-            if len(wav_samples) >= 100:
-                max_amp = max(abs(int.from_bytes(wav_samples[i:i+2], 'little', signed=True))
-                              for i in range(0, len(wav_samples) - 1, 2))
-                if max_amp < 100:
-                    logger.warning(f"TTS output is near-silent! max_amp={max_amp}, "
-                                   f"text_len={len(text)}, text={repr(text[:50])}")
-        except Exception as e:
-            logger.warning(f"Silence trim skipped: {e}")
+                with open(out_path, "rb") as f:
+                    wav_bytes = f.read()
+                try:
+                    os.unlink(out_path)
+                except OSError:
+                    pass
 
+                # 裁剪开头静音
+                wav_bytes = _trim_wav_leading_silence(wav_bytes)
+
+                if _is_silent_wav(wav_bytes):
+                    logger.warning(f"TTS chunk {i} silent, skipped: {repr(chunk[:40])}")
+                    continue
+
+                valid_wavs.append(wav_bytes)
+                logger.info(f"TTS chunk {i} OK: {len(wav_bytes)} bytes, text={repr(chunk[:30])}")
+
+            except Exception as e:
+                logger.warning(f"TTS chunk {i} failed: {e}, text={repr(chunk[:40])}")
+                continue
+
+        if not valid_wavs:
+            raise ValueError("all TTS chunks produced silence")
+
+        # 拼接所有有效音频
+        combined = _concat_wav_files(valid_wavs)
+        out_path = os.path.join(self._tmp_dir, f"tts_melo_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
+        with open(out_path, "wb") as f:
+            f.write(combined)
+
+        logger.info(f"TTS combined: {len(valid_wavs)}/{len(chunks)} chunks, {len(combined)} bytes total")
         return out_path
 
     def _synthesize_sync(self, text: str) -> str:
@@ -295,10 +456,10 @@ engine: MeloTTS = None
 async def startup():
     global engine
     engine = MeloTTS()
-    # 预热：触发模型下载 + 首次推理
+    # 预热：触发模型下载 + 首次推理（用完整句子确保非静音）
     try:
         logger.info("MeloTTS warmup...")
-        await engine.synthesize("预热")
+        await engine.synthesize("你好，苗族文化助手已就绪。")
         logger.info("MeloTTS warmup done")
     except Exception as e:
         logger.warning(f"MeloTTS warmup skipped: {e}")
@@ -344,34 +505,12 @@ async def synthesize(request: Request):
     try:
         audio_path = await engine.synthesize(text)
 
-        # 读取音频并检测静音
         with open(audio_path, "rb") as f:
             audio_bytes = f.read()
         try:
             os.unlink(audio_path)
         except OSError:
             pass
-
-        # 静音检测：若输出近乎全静音，补齐文本重试一次
-        wav_data = audio_bytes[44:]  # 跳过 WAV 头
-        if len(wav_data) >= 100:
-            max_amp = max(abs(int.from_bytes(wav_data[i:i+2], 'little', signed=True))
-                          for i in range(0, len(wav_data) - 1, 2))
-            if max_amp < 100 and len(text) < 120:
-                logger.warning(f"TTS silent (max_amp={max_amp}), retrying with padded text")
-                # 补齐上下文到 120+ 字（已知阈值），用无害填充句
-                pad_sentence = "。这是苗族文化的重要组成部分，值得深入研究和传承。"
-                retry_text = text
-                while len(retry_text) < 120:
-                    retry_text += pad_sentence
-                audio_path2 = await engine.synthesize(retry_text)
-                with open(audio_path2, "rb") as f:
-                    audio_bytes = f.read()
-                try:
-                    os.unlink(audio_path2)
-                except OSError:
-                    pass
-                logger.info(f"TTS retry: {len(text)} -> {len(retry_text)} chars, {len(audio_bytes)} bytes")
 
         return Response(
             content=audio_bytes,

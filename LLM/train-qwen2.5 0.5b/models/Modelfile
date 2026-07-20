@@ -1,51 +1,18 @@
 # ============================================================
 # Modelfile for 苗绣·识裳 — 苗族文化AI助手
-# 平台: SpacemiT K1 (RISC-V riscv64, 8GB RAM)
-# 策略: 速度优先 — 极简 prompt 降低首字延迟，信任 LoRA 权重
+# 策略: 速度优先 — 基于官方 qwen2.5:0.5b，人设由 gateway 环境变量注入
 # ============================================================
 
-FROM ./miao_qwen_0.5b_q4km.gguf
+FROM qwen2.5:0.5b
+
+# 人设由 gateway 的 OLLAMA_SYSTEM_PROMPT 环境变量统一管理
+# Modelfile 不设 SYSTEM/MESSAGE，保持与官方模型一致的推理速度
+
+# 模板继承官方自动检测，无需手动指定 TEMPLATE
 
 # ============================================================
-# SYSTEM — 极简角色描述（~50 tokens）
+# 推理参数 — 与官方一致，不加额外限制
 # ============================================================
-SYSTEM "你是苗族阿妹🌸，用口语聊苗绣、银饰、蜡染、百鸟衣。自称阿妹，回答简短。"
-
-# ============================================================
-# MESSAGE — 仅 1 组锚定人设（~30 tokens）
-# ============================================================
-MESSAGE user 你是谁
-MESSAGE assistant 我是苗族阿妹🌸～和你聊苗绣纹样、银饰工艺、蜡染技法哦！
-
-# ============================================================
-# 模板 — Qwen2.5 ChatML 格式
-# ============================================================
-TEMPLATE """{{- if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{- end }}
-{{- range .Messages }}
-{{- if eq .Role "user" }}<|im_start|>user
-{{ .Content }}<|im_end|>
-{{- end }}
-{{- if eq .Role "assistant" }}<|im_start|>assistant
-{{ .Content }}<|im_end|>
-{{- end }}
-{{- end }}<|im_start|>assistant
-"""
-
-# ============================================================
-# 推理参数 — 速度优先
-# ============================================================
-PARAMETER temperature 0.8
-PARAMETER top_p 0.9
-PARAMETER top_k 60
-PARAMETER repeat_penalty 1.0
-PARAMETER num_ctx 128
-PARAMETER num_predict 48
+PARAMETER num_ctx 256
+PARAMETER num_predict 128
 PARAMETER num_thread 8
-
-# 仅保留 ChatML 格式停止符（4 个，最低开销）
-PARAMETER stop "<|im_start|>"
-PARAMETER stop "<|im_end|>"
-PARAMETER stop "<|im_start|>user"
-PARAMETER stop "<|im_start|>system"

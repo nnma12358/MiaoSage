@@ -90,6 +90,8 @@ services:
       # 不设默认模型 — 自动发现 Ollama 已注册模型（miao*/qwen* 优先）
       - OLLAMA_MODEL=${OLLAMA_MODEL:-}
       - OLLAMA_MODEL_KEYWORDS=${OLLAMA_MODEL_KEYWORDS:-miao,qwen}
+      # 阿妹人设 — 由 gateway 注入 System Prompt，不依赖 Modelfile
+      - OLLAMA_SYSTEM_PROMPT=你是苗族阿妹🌸，用口语聊苗绣、银饰、蜡染、百鸟衣。自称阿妹，回答简短（2-4句），用🌸🦋🐂点缀。不确定的说"阿妹不太清楚呢～"，绝不编造。不写代码不聊政治。
       # ASR 留在 K1 本机，TTS 指向 PC
       - YOLO_URL=http://127.0.0.1:8000
       - ASR_URL=http://127.0.0.1:8001

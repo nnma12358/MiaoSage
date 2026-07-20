@@ -46,7 +46,7 @@ ENV MELO_MODEL_DIR=/app/models
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/torch/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib
 
 # ---- 服务代码 ----
-COPY my-app/server/tts_pc.py /app/
+COPY server/tts_pc.py /app/
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=120s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')" || exit 1

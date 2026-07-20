@@ -237,21 +237,26 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
   const LLM_API_URL = '/chat';           // Qwen2.5-Instruct 对话 API
   const LLM_STREAM_URL = '/chat/stream';  // 流式对话（可选）
   
-  // YOLO 自定义模型类别名 → 中文展示名
-  // 覆盖 clothes.yaml (2类) + dataset.yaml (8类) 共 10 个苗绣/银饰类别
+  // YOLO 新模型类别（Clothes 10类 + Sliver 6类）共 16 类
   const yoloLabelMap = {
-    // ===== clothes.yaml：苗族服装大类 =====
-    '苗族便装': '苗族便装',
-    '苗族盛装': '苗族盛装',
-    // ===== dataset.yaml：苗族银饰细类 =====
-    'tassel_hat':                    '苗族流苏帽',
-    'miao_ox_horn_silver_headwear':  '苗族银角头饰',
-    'miao_silver_hairpin':           '苗族银发簪',
-    'miao_silver_crown':             '苗族银冠',
-    'miao_silver_chest_ornament':    '苗族银胸牌',
-    'miao_silver_lock':              '苗族银锁',
-    'miao_silver_necklace':          '苗族银项链',
-    'silver_headdress':              '银质头饰',
+    // ===== Clothes.onnx：苗族服装 10 类 =====
+    '几何挑花麻质上衣': '几何挑花麻质上衣',
+    '刺绣围腰': '苗族刺绣围腰',
+    '单边彩绣百褶裙': '单边彩绣百褶裙',
+    '多层条纹布包头': '多层条纹布包头',
+    '小型浮雕银胸吊牌': '浮雕银胸吊牌',
+    '彩绣直筒绣花长裙': '彩绣直筒绣花长裙',
+    '白色头帕': '白色头帕',
+    '米白麻质短上衣': '米白麻质短上衣',
+    '袖口破线绣纹样': '袖口破线绣纹样',
+    '彩色十字挑花包头头巾': '十字挑花包头头巾',
+    // ===== Sliver.onnx：苗族银饰 6 类 =====
+    '全包式银花帽': '全包式银花帽',
+    '平顶花丝银头冠': '平顶花丝银头冠',
+    '立柱花丝银头冠': '立柱花丝银头冠',
+    '银压领': '银压领',
+    '雕花弯形银牛角冠': '雕花弯形银牛角冠',
+    '黑苗银锁': '黑苗银锁',
   };
 
   // 将 base64 Data URL 转为 Blob（用于 FormData 上传）
@@ -266,115 +271,144 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     return new Blob([buffer], { type: mime });
   }
 
-  // --- 苗族服饰知识库（覆盖自定义 YOLO 模型全部 10 类 + 3 类文化兜底） ---
+  // --- 苗族服饰知识库（新模型 服装10类 + 银饰6类 + 3类兜底） ---
   const miaoKnowledge = {
-    // ==================== clothes.yaml 服装大类 ====================
-    '苗族便装': {
-      type: '苗族便装 Miao Casual Wear',
-      confidence: 95.8,
-      color: '靛蓝/黑色为底，袖口领口缀以彩色绣片 Indigo/black base, embroidered patches at cuffs and collar',
-      pattern: '几何回纹、菱形纹、八角花纹 Geometric fret, diamond, octagonal flower',
-      meaning: '苗族便装是苗族人民日常生活劳作的主要服饰。衣身简洁适体，在领口、袖口、衣襟等关键部位缀以精美绣片，体现苗族"简中有繁"的审美哲学。便装上的几何纹样多取材于自然山川与农耕生活。\n\nMiao casual wear is the primary attire for daily life and labor. The silhouette is clean and practical, yet adorned with exquisite embroidery at key areas — embodying the Miao aesthetic of "complexity within simplicity."',
-      custom: '不同苗族支系的便装在色彩偏好上各有特色：黔东南以红绿绣片为主，黔西北多见素雅黑白色调。\n\nDifferent Miao subgroups have distinct preferences: southeastern Guizhou favors red-green patches, while northwestern Guizhou leans toward austere black-and-white.',
+    // ==================== Clothes.onnx 服装 10 类 ====================
+    '几何挑花麻质上衣': {
+      type: '几何挑花麻质上衣', confidence: 95,
+      color: '麻质本色，几何挑花绣',
+      pattern: '菱形纹、回纹、八角花纹',
+      meaning: '苗族传统麻质上衣，以几何挑花工艺在领口、袖口、衣襟绣制菱形纹与回纹。这些抽象几何图案并非简单装饰——菱形代表田野与丰收，回纹象征生命轮回不息，八角花则对应苗族古历法中的八个节气，体现了苗族人民"观天象、顺四时"的农耕智慧。',
+      custom: '挑花是苗族最古老的刺绣技法之一，不需画稿，全凭心中构图在麻布经纬上数纱挑绣。一位熟练绣娘每天可挑数百针，一件上衣需耗时数月完成。黔东南雷山、台江一带的几何挑花最为精美。',
     },
-    '苗族盛装': {
-      type: '苗族盛装 Miao Ceremonial Attire',
-      confidence: 96.3,
-      color: '黑底满绣，银光璀璨，辅以红、金、绿 Black base fully embroidered, silver accents with red, gold, green',
-      pattern: '蝴蝶妈妈纹、龙纹、百鸟纹、铜鼓纹、涡旋纹 Butterfly Mother, dragon, hundred-bird, bronze drum, spiral',
-      meaning: '苗族盛装是苗族最隆重的礼仪服饰，只在鼓藏节、苗年、婚礼等重大场合穿戴。整套盛装重达十余斤，绣满苗族创世史诗中的图腾符号：蝴蝶妈妈象征万物起源，龙纹代表权威守护，涡旋纹铭刻祖先跨越的江河。\n\nMiao ceremonial attire is worn only at major occasions. Weighing over 10 jin, it is covered with totemic symbols from the Miao creation epic.',
-      custom: '一套完整的苗族盛装需要母女相传数十年积累，银饰由银匠纯手工打制，绣片需多位绣娘花费数年完成，是名副其实的"穿在身上的史诗"。\n\nA complete set is passed down mother-to-daughter over decades — truly an "epic worn on the body."',
+    '苗族刺绣围腰': {
+      type: '苗族刺绣围腰', confidence: 94,
+      color: '靛蓝底，五彩丝线绣',
+      pattern: '涡旋纹、铜鼓纹、石榴花纹',
+      meaning: '围腰是苗族女子日常劳作与盛装必备之物。围腰上最具标志性的纹样是涡旋纹——它并非普通装饰，而是苗族千年迁徙史诗的"活地图"：每一道螺旋代表一条跨越的江河（黄河、长江、沅水、清水江），铜鼓纹居中象征太阳与祖先权威，石榴花则寄托多子多福的美好祈愿。',
+      custom: '苗族不同支系的围腰长度差异显著：黔东南西江苗寨围腰过膝，以红绿色绣为主；黔西北威宁一带则短至腰际，以素雅黑白为主。围腰长度和纹样是识别苗族支系身份的"活族谱"，苗家女子从小学习绣围腰，出嫁时需备数条作为嫁妆。',
     },
-    // ==================== dataset.yaml 银饰细类 ====================
-    '苗族流苏帽': {
-      type: '苗族流苏帽 Miao Tassel Hat',
-      confidence: 94.5,
-      color: '黑色绒布底，银色流苏垂坠，间以彩色珠串 Black velvet base, silver tassels with colored beads',
-      pattern: '垂珠纹、星芒纹、如意纹 Beaded fringe, starburst, ruyi patterns',
-      meaning: '流苏帽是苗族青年女子日常佩戴的头饰。帽顶缀有银质流苏，行走时银丝摇曳、光影流动，寓意"流光溢彩、青春永驻"。星芒纹象征太阳光辉，如意纹寄托生活顺遂的美好祝愿。\n\nThe tassel hat is a daily headpiece for young Miao women. Silver tassels sway with each step, creating a play of light and shadow — symbolizing "eternal radiance and youth."',
-      custom: '流苏帽在不同苗族支系中形态各异：西江苗寨的流苏帽较矮圆，缀以红绿珠串；台江地区的则高耸挺拔，银流苏更长更密。\n\nStyles vary: Xijiang\'s are shorter and rounder, while Taijiang\'s are taller with denser silver tassels.',
+    '单边彩绣百褶裙': {
+      type: '单边彩绣百褶裙', confidence: 93,
+      color: '靛蓝黑底，单边彩绣',
+      pattern: '几何条纹、菱形纹、花卉纹',
+      meaning: '百褶裙是苗族女性盛装中最具视觉冲击力的服饰。裙身由数十乃至上百道细密褶裥组成，层叠如山峦起伏，寓意苗家先祖居住的崇山峻岭。单边彩绣的设计体现了苗族"不对称之美"的审美哲学——绣花只在一侧绽放，另一侧留白，恰似山水画中"疏可走马、密不透风"的构图智慧。',
+      custom: '一条精美的百褶裙制作周期极长：首先将土布反复浸染靛蓝数十次直至深黑，再用指甲或骨片一道一道掐出褶裥，最后绣花。部分支系（如台江施洞）的百褶裙上绣有完整的苗族古歌图案，被称为"穿在身上的史书"。',
     },
-    '苗族银角头饰': {
-      type: '苗族银角头饰 Miao Silver Horn Headdress',
-      confidence: 98.2,
-      color: '银白为主，间以靛蓝衬底 Silver-white with indigo blue base',
-      pattern: '牛角纹、太阳芒纹、涡旋纹 Ox horn, sun ray, spiral patterns',
-      meaning: '银角是苗族最重要的头饰之一，源于蚩尤部落的牛图腾崇拜。牛角象征力量与祖先庇护，银角上錾刻的太阳芒纹寓意生命轮回，涡旋纹则记录着苗族先民跨越江河的迁徙史诗。\n\nThe silver horn is a paramount Miao headdress, rooted in the ox totem worship of the Chiyou tribe. Horns symbolize strength and ancestral protection; sun-ray engravings signify the cycle of life; spiral motifs chronicle the epic migration of Miao ancestors across rivers.',
-      custom: '每逢“鼓藏节”，苗族姑娘佩戴全套银角、银冠、银项圈，重达十余斤，行走时银铃作响，被认为可以驱邪纳福。\n\nDuring the Guzang Festival, Miao girls don full silver sets weighing 5+ kg — the tinkling of silver bells is believed to ward off evil and bring blessings.',
+    '多层条纹布包头': {
+      type: '多层条纹布包头', confidence: 92,
+      color: '黑白条纹交织',
+      pattern: '横纹与竖纹交替排列',
+      meaning: '多层条纹布包头是苗族识别支系和婚姻状况的重要标志。黑白相间的条纹并非随意设计——横纹代表大地与人间的秩序，竖纹象征通天之柱，横竖交织寓意天地交融、阴阳和谐。层数越多代表佩戴者家族地位越高，未婚女子通常包裹层次较少，已婚妇女则层叠厚重。',
+      custom: '包头的包裹方式因支系而异：黔东南黄平一带以"牛角包"著称，将头帕盘绕成牛角状高耸于头顶；安顺地区则流行"圆盘包"，扁平如满月。在苗年、鼓藏节等盛大节日，女子还会在头帕上缀银花、银蝶作为点缀。',
     },
-    '苗族银发簪': {
-      type: '苗族银发簪 Miao Silver Hairpin',
-      confidence: 93.7,
-      color: '纯银本色，间或有鎏金点缀 Pure silver, occasionally gilt-accented',
-      pattern: '花鸟纹、凤穿牡丹纹、如意云头纹 Flower-bird, phoenix-through-peony, ruyi cloud',
-      meaning: '银发簪是苗族女子绾发定情的信物。簪首常雕刻凤凰或蝴蝶——凤凰象征高贵与吉祥，蝴蝶代表苗族创世神话中的"蝴蝶妈妈"。发簪不仅固定发髻，更是女子成年与婚姻状况的标识：未婚女子簪头朝左，已婚朝右。\n\nSilver hairpins serve as love tokens for Miao women. The pinhead features a phoenix (nobility) or butterfly (the Butterfly Mother myth). The pin also indicates marital status: unmarried women wear the pinhead left, married right.',
-      custom: '苗族银发簪的制作讲究"一寸银丝一寸心"，银匠需将粗银条反复捶打拉丝至细如发丝，再盘绕成花，一支精美发簪往往需耗费数日心血。\n\nCrafting follows "every inch of silver thread equals an inch of heart" — requiring days of work to hammer silver into hair-thin wires and coil them into floral shapes.',
+    '浮雕银胸吊牌': {
+      type: '小型浮雕银胸吊牌', confidence: 91,
+      color: '纯银浮雕，中心凸起',
+      pattern: '太阳纹、乳钉纹、莲花纹',
+      meaning: '小型浮雕银胸吊牌佩戴于胸前正心位置，是苗族盛装中的"护心镜"。中央太阳纹象征光明正气驱散邪祟，周围乳钉纹代表满天繁星寓意天地护佑，部分吊牌刻有莲花纹体现苗族与佛教文化的交融。浮雕工艺使纹样凸起于银面之上，立体感极强，在阳光下银光流转。',
+      custom: '银胸吊牌通常由母亲传给女儿，是苗族女性嫁妆中的重要组成部分。苗族银匠制作胸牌时，先熔银铸板，再用錾刀一刀一刀雕出浮雕纹样——整个过程全凭心手相应，不借图纸。一枚精美胸牌从熔银到成品需经历熔炼、锻打、錾刻、镂空等三十余道工序。',
     },
-    '苗族银冠': {
-      type: '苗族银冠 Miao Silver Crown',
-      confidence: 96.0,
-      color: '银白璀璨，缀以红蓝宝石 Bright silver with ruby and sapphire accents',
-      pattern: '二龙戏珠、百鸟朝凤、缠枝花卉 Twin dragons, hundred birds, twining floral scrolls',
-      meaning: '银冠是苗族女子盛装中最高等级的头饰，通常由寨中德高望重的老银匠为新娘量身定做。冠顶的二龙戏珠纹象征天地交泰、阴阳和谐；百鸟朝凤代表家族兴旺；缠枝花卉寓意生命绵延不绝。\n\nThe silver crown is the highest-grade headpiece in Miao ceremonial attire, custom-made for the bride. The twin-dragons motif symbolizes cosmic harmony; hundred-birds-hailing-phoenix represents family prosperity; scrolling florals signify unbroken continuity of life.',
-      custom: '银冠制作融合了錾刻、镂空、累丝、镶嵌等多种技法。一顶精美银冠价值相当于苗族家庭数年收入，是家族财富与技艺传承的集中体现。\n\nThe crown integrates engraving, openwork, filigree, and inlay techniques. A fine crown can be worth several years of family income.',
+    '彩绣直筒绣花长裙': {
+      type: '彩绣直筒绣花长裙', confidence: 90,
+      color: '深色底，彩绣花纹遍布',
+      pattern: '花鸟纹、几何纹、缠枝花卉',
+      meaning: '彩绣直筒长裙是苗族女子日常与礼仪皆宜的服饰。直筒剪裁简洁大方，精髓全在裙身遍布的彩绣——花鸟纹象征自然和谐，几何纹代表天地秩序，缠枝花卉寓意生命绵延不绝。走起路来裙摆微动，绣花若隐若现，体现了苗族"动静皆美"的穿衣哲学。',
+      custom: '直筒绣花长裙多见于贵州台江、剑河一带的苗族支系。绣制一条长裙需先将整块布料绷在绣架上，绣娘俯身刺绣数月至半年。苗族绣娘有"绣花不绣夜"的传统——只在白天自然光下绣制，认为月光下绣出的花"没有魂"，体现了对刺绣艺术的敬畏之心。',
     },
-    '苗族银胸牌': {
-      type: '苗族银胸牌 Miao Silver Chest Ornament',
-      confidence: 92.3,
-      color: '银质本色，中心嵌有红色玛瑙或琉璃 Silver with central red agate or glass inlay',
-      pattern: '太阳纹、乳钉纹、八卦纹 Sun disc, nipple-stud, bagua trigram patterns',
-      meaning: '银胸牌佩戴于胸前正心，是苗族盛装中的"护心镜"。中央太阳纹象征光明与正气驱散邪祟；乳钉纹代表繁星寓意天地护佑；部分胸牌刻有八卦纹，体现苗族与汉文化的交融。\n\nThe silver chest ornament worn over the heart serves as a "heart-protecting mirror." The sun disc symbolizes light dispelling evil; nipple-stud patterns represent stars and cosmic protection; some feature bagua trigrams reflecting Miao-Han cultural exchange.',
-      custom: '银胸牌通常由母亲传给女儿，是苗族女性嫁妆中的重要组成部分。胸牌的重量和工艺复杂度直接体现家族的锻银技艺水平。\n\nChest ornaments are passed mother-to-daughter and form a significant part of the bride\'s dowry. Craftsmanship reflects the family\'s silversmithing prowess.',
+    '白色头帕': {
+      type: '白色头帕', confidence: 89,
+      color: '纯白棉布，素净无染',
+      pattern: '素白为主，间有淡色暗纹刺绣',
+      meaning: '白色头帕是部分苗族支系最具辨识度的标志性头饰。在苗族色彩体系中，白色象征纯洁、庄重与对祖先的敬仰。白色头帕不仅具有实用功能——遮阳避尘、固定发髻——更承载着深厚的文化寓意：苗族古歌传唱，先祖从东方迁徙而来，白色代表东方日出之地，佩戴白色头帕即是铭记祖源、不忘来路。',
+      custom: '白色头帕主要流行于黔西北威宁、赫章一带的苗族支系（俗称"白苗"）。头帕通常极长——展开可达数米，盘绕于头顶形成层叠如云朵的造型。盘帕是苗族女子清晨必做的功课，手法娴熟者仅需数分钟即可盘出整齐美观的头帕。',
     },
-    '苗族银锁': {
-      type: '苗族银锁 Miao Silver Lock',
-      confidence: 94.1,
-      color: '银白色，常搭配红色编织绳结 Silver-white, often paired with red braided cord knots',
-      pattern: '长命富贵纹、麒麟送子纹、蝙蝠纹 Longevity-wealth, qilin delivering child, bat motifs',
-      meaning: '苗族银锁是给孩童佩戴的祈福护身符，寓意"锁住生命、锁住福气"。锁面"长命富贵"直抒祝愿；麒麟送子纹寄托人丁兴旺；蝙蝠因"蝠"与"福"同音，象征福气临门。\n\nThe Miao silver lock is a protective amulet for children, symbolizing "locking in life, locking in blessings." The characters express wishes for longevity and wealth; qilin motif hopes for abundant offspring; bat (fu) symbolizes fortune.',
-      custom: '银锁在孩子满月或周岁时由外婆赠送，是苗族"姥姥银"传统中最具代表性的物件。通常佩戴至十二岁，之后由父母保管作为传家宝。\n\nThe lock is gifted by the maternal grandmother at the child\'s one-month or one-year celebration. Worn until age twelve, then kept as a family heirloom.',
+    '米白麻质短上衣': {
+      type: '米白麻质短上衣', confidence: 88,
+      color: '米白麻质原色，天然质朴',
+      pattern: '简约几何纹样、暗纹织花',
+      meaning: '米白麻质短上衣是苗族人民适应湿热山地气候的智慧结晶。麻质面料透气吸汗、凉爽舒适，短款剪裁便于田间劳作和山路行走。衣身虽以素色为主，但苗族女子会在袖口、领口织入暗纹几何花——这些含蓄的纹样是苗族"外简内繁"审美观的体现：日常不张扬，但细节绝不敷衍。',
+      custom: '麻质上衣的制作从种麻开始——苗族至今保留着古老的种麻、沤麻、绩麻、纺线、织布全套工艺。一件麻质上衣从麻秆到成衣需经历十余道工序，耗时数月。苗族有"麻衣传家"的传统，母亲亲手为女儿织造的麻质上衣是出嫁时最珍贵的嫁妆之一。',
     },
-    '苗族银项链': {
-      type: '苗族银项链 Miao Silver Necklace',
-      confidence: 95.4,
-      color: '纯银光泽，层叠佩戴时银光如瀑 Pure silver luster, cascading brilliance when layered',
-      pattern: '鱼纹、螺蛳纹、连环纹 Fish, spiral shell, interlocking ring patterns',
-      meaning: '苗族银项链多层叠戴，层数越多代表家族越富裕。鱼纹寓意年年有余与旺盛生育力；螺蛳纹取材于清水江流域水产，记录苗族滨水而居的生存记忆；连环纹象征家族血脉相承代代不绝。\n\nMiao silver necklaces are worn in multiple layers — more layers signify greater wealth. Fish motifs mean annual abundance and fertility; spiral shell patterns reflect aquatic life of the Qingshui River; interlocking rings symbolize unbroken family lineage.',
-      custom: '银项链按重量分为三两三、六两六、九两九等吉利规格。最重的九两九银项链通常只在鼓藏节祭祖大典上佩戴。\n\nNecklaces are classified into auspicious weight denominations. The heaviest 9.9-tael necklace is reserved for the Guzang Festival ancestor worship ceremony.',
+    '袖口破线绣纹样': {
+      type: '袖口破线绣纹样', confidence: 87,
+      color: '彩色破线绣，丝线光泽闪烁',
+      pattern: '花鸟纹、蝶纹、龙凤纹',
+      meaning: '破线绣是苗族独有的超高难度刺绣技法——将一根丝线劈开分成8至12股细如发丝的丝线后再绣制。袖口是苗族服饰中绣工最集中的部位之一，因为苗族女子行走、劳作时袖口最引人注目。袖口上的蝴蝶纹直接指向苗族最核心的创世神话"蝴蝶妈妈"——传说蝴蝶妈妈生下十二个蛋，孵出人类始祖姜央及天地万物。',
+      custom: '破线绣技法极其考验绣娘的眼力和耐心：一根标准丝线需用指尖反复揉搓使其松散，再用针尖一缕一缕劈开——劈得越细绣面越平滑光泽。一位绣娘一天劈出的丝线往往只够绣指甲盖大小的面积。台江施洞的破线绣袖口技艺被列为国家级非物质文化遗产。',
     },
-    '银质头饰': {
-      type: '银质头饰 Silver Headdress',
-      confidence: 91.8,
-      color: '银白，偶以鎏金或彩色珐琅点缀 Silver-white, occasionally gilt or enamel-accented',
-      pattern: '综合纹样：花卉、禽鸟、云雷纹 Mixed: floral, bird, cloud-thunder patterns',
-      meaning: '银质头饰是多个苗族支系共有的头部银饰统称，涵盖银梳、银围、银簪等形态。银饰在苗族文化中被视为"白色黄金"——不仅是装饰品，更是苗族以银为贵价值观的体现：银能辟邪、保值、在迁徙中随身携带家族财富。\n\n"Silver headdress" collectively refers to head ornaments shared across Miao subgroups. Silver is regarded as "white gold" in Miao culture — it wards off evil, preserves value, and can be carried during migrations as portable family wealth.',
-      custom: '苗族银饰锻造技艺已列入国家级非物质文化遗产名录。苗族银匠无需图纸，全凭心中图谱和手中铁锤，被誉为"月光下的艺术家"。\n\nMiao silver forging has been inscribed on China\'s National Intangible Cultural Heritage list. Silversmiths work without blueprints — earning the title "artists under the moonlight."',
+    '十字挑花包头头巾': {
+      type: '彩色十字挑花包头头巾', confidence: 86,
+      color: '彩色棉线，十字挑花满绣',
+      pattern: '十字纹、菱形纹、八角花',
+      meaning: '十字挑花是苗族最具代表性的绣法之一，以布帛经纬纱交叉点为基础绣出一个个"十"字形单元，再由无数个"十"字组成精美图案。包头头巾上的十字挑花纹样并非随意之作——每一个十字都是一个"文字符号"，记录着苗族的历史事件、迁徙路线和祖训家规。苗族古歌中所唱的"十字绣花绣古理，千针万线记祖言"即源于此。',
+      custom: '十字挑花包头头巾主要流行于贵州黄平、施秉一带。苗族女子从小随母亲学习十字挑花，至出嫁时需绣出数条精美头巾。头巾不仅用于包头，在苗族社交中更有"以巾传情"的传统——姑娘将亲手绣制的头巾赠予心上人，头巾绣工的精细程度直接体现女子的聪慧与家教。',
     },
-    // ==================== 文化兜底条目（LLM 离线时本地应答） ====================
+    // ==================== Sliver.onnx 银饰 6 类 ====================
+    '全包式银花帽': {
+      type: '全包式银花帽', confidence: 96,
+      color: '纯银银白，全包裹式造型',
+      pattern: '银花簇拥、龙凤纹、缠枝纹',
+      meaning: '全包式银花帽是苗族银饰中最为隆重的头饰类型，将佩戴者的头部完全包裹在银花之中。帽体由数十朵手工打制的银花层层堆叠而成，每朵银花由银匠一锤一錾手工成形——花瓣薄如蝉翼，花蕊细如针尖。银花簇拥如繁花盛开，象征苗族女性如花般绽放的生命力与家族的繁荣昌盛。龙凤纹则代表尊贵与吉祥。',
+      custom: '一顶全包式银花帽的制作需耗时数月乃至一年。银匠先将银锭反复锻打成薄片，再剪出花瓣形状，用錾刀刻出花瓣纹理，最后将数十朵银花焊接组合于帽架之上。由于制作难度极高，全包式银花帽通常只在鼓藏节、苗年等最盛大的节日和婚礼上佩戴，是苗族女性一生中最珍贵的"高光配饰"。',
+    },
+    '平顶花丝银头冠': {
+      type: '平顶花丝银头冠', confidence: 95,
+      color: '纯银花丝，银光如织',
+      pattern: '花丝编织纹、如意纹、蝴蝶纹',
+      meaning: '平顶花丝银头冠是苗族花丝工艺的巅峰之作。花丝工艺将银料拉成直径不足一毫米的银丝，再以银丝为"线"编织出精美的几何与花卉图案。平顶设计庄重大气，象征天圆地方的宇宙观；花丝编织纹如蛛网般精细繁密，寓意家族人丁兴旺、血脉相连；如意纹寄托生活顺遂、万事如意的美好祝愿。',
+      custom: '花丝工艺是苗族银匠最具代表性的绝技之一。拉丝时银匠需将粗银条反复穿过大小递减的钢模孔洞，从直径5毫米拉至0.2毫米的银丝——一根银丝往往需要数十次拉拔，稍有不慎就会断裂前功尽弃。一位技艺精湛的银匠一年只能制作一到两顶花丝银头冠，因此被誉为"月光下的艺术家"。',
+    },
+    '立柱花丝银头冠': {
+      type: '立柱花丝银头冠', confidence: 94,
+      color: '纯银立柱，花丝缠绕其上',
+      pattern: '立柱造型、花丝缠绕纹、龙凤纹',
+      meaning: '立柱花丝银头冠是苗族银角中最具视觉冲击力的类型——高高的银质立柱从冠顶冲天而起，花丝缠绕其上如藤蔓攀柱，象征苗族先祖"通天达地"的信仰。立柱本身代表连接天地的神树或天梯，花丝缠绕寓意吉祥与祝福绵延不绝。龙凤纹盘绕柱身，代表尊贵守护与阴阳和谐。',
+      custom: '立柱花丝银头冠主要流行于贵州台江施洞一带，是当地苗族女子盛装中最醒目的标志。立柱的高低和花丝的精细程度直接体现佩戴者家族的经济实力与银匠技艺水平。节庆时苗族姑娘佩戴立柱银冠，行走间银柱微颤、银铃轻响，苗族认为这种声音能驱邪纳福、引来好运。',
+    },
+    '银压领': {
+      type: '银压领', confidence: 93,
+      color: '纯银银白，镂空工艺',
+      pattern: '龙凤纹、缠枝纹、如意云头',
+      meaning: '银压领是苗族女子佩戴于衣领之上的银饰，兼具实用与装饰双重功能。压领的主体为一弯如月牙的银片，佩戴时恰好压住衣领边缘使其挺括平整——这是"压领"之名的由来。银面上镂空雕刻龙凤纹和缠枝花卉，龙凤象征尊贵吉祥，缠枝寓意生命连绵。银压领在苗族盛装中起到"画龙点睛"的作用——将视线自然引向佩戴者的面容。',
+      custom: '银压领的制作需银匠先将银板錾刻出纹样轮廓，再用细如针尖的镂刀将纹样周围掏空形成镂空效果——这一步极需耐心，稍有不慎便会戳破纹样主体前功尽弃。一件精美的银压领从熔银到成品需经历熔炼、锻打、錾刻、镂空、打磨等三十余道工序，耗时数日至数周。',
+    },
+    '雕花弯形银牛角冠': {
+      type: '雕花弯形银牛角冠', confidence: 97,
+      color: '纯银银白，弯角造型',
+      pattern: '牛角纹、龙纹、花鸟纹、水波纹',
+      meaning: '雕花弯形银牛角冠是苗族银角中最具辨识度的经典造型——形似水牛弯角🐂，高高扬起于头顶。牛角图腾源于苗族先祖蚩尤部落的牛崇拜，在苗族信仰中牛角象征祖先的勇猛力量与民族的顽强坚韧。牛角上錾刻龙纹代表权威守护、花鸟寓意吉祥、水波纹记录苗族历代跨越的江河，是真正的"戴在头上的民族史诗"。',
+      custom: '苗族银角分为"平角"和"弯角"两种——平角多流行于清水江流域，弯角则以台江施洞为代表，角尖向内优雅弯曲形如新月。银牛角冠的制作从熔银铸板开始，银匠用铁锤反复锻打银板使其均匀平整，再以数十把大小形状各异的錾刀一刀一刀刻出精美纹饰。一顶银牛角冠重达一到两公斤，是苗族银匠技艺与家族财富的双重象征。',
+    },
+    '黑苗银锁': {
+      type: '黑苗银锁', confidence: 92,
+      color: '纯银银白，黑苗风格',
+      pattern: '如意锁形、缠枝纹、长命富贵铭文',
+      meaning: '黑苗银锁是黔东南黑苗支系特有的银饰类型，以如意锁为基本造型。锁面正中錾刻"长命富贵"等吉祥铭文直抒祝福，两侧镶嵌缠枝纹寓意福气绵长。在苗族传统中，银锁不仅是装饰品更是护身符——母亲将银锁赠予女儿时寄托了"锁住生命、锁住平安、锁住福气"的深深祝福，是苗族母女之间情感传递的重要信物。',
+      custom: '黑苗银锁通常在外婆为外孙女举办的满月礼或周岁礼上赠送，是苗族"姥姥银"传统中最具代表性的物件。女孩从小佩戴银锁，至十二岁后由父母收起珍藏作为传家宝代代相传。银锁正面浮雕精美，背面往往刻有赠送日期和祝福语——一把银锁就是一部微型家族史。',
+    },
+    // ==================== 兜底（LLM 离线时本地应答） ====================
     '苗族百鸟衣': {
-      type: '苗族百鸟衣 Miao Hundred-Bird Coat',
-      confidence: 96.8,
-      color: '黑底彩绣，以红、绿、金为主 Black base with red, green, gold embroidery',
-      pattern: '百鸟纹、蝶恋花纹、龙纹 Hundred-bird, butterfly-and-flower, dragon motifs',
-      meaning: '百鸟衣是苗族“牯脏节”祭祖盛装，衣上绣满百鸟朝凤图。苗族传说中，百鸟曾帮助苗族始祖从洪水中逃生，因此鸟纹代表着救赎与吉祥。蝴蝶纹则指向“蝴蝶妈妈”创世神话。\n\nThe Hundred-Bird Coat is the ceremonial attire for the Miao Guzang Festival ancestor worship, embroidered with birds paying homage to the phoenix. In Miao legend, birds helped the first ancestor escape a great flood, so bird motifs symbolize salvation and auspiciousness. Butterfly patterns reference the Butterfly Mother creation myth.',
-      custom: '一件百鸟衣需要数十位绣娘耗费数年手工绣制，绣法包含破线绣、打籽绣、马尾绣等十余种技法。\n\nA single Hundred-Bird Coat takes dozens of embroiderers several years to complete, using over ten techniques including split-thread stitch, seed stitch, and horsehair embroidery.',
+      type: '苗族百鸟衣', confidence: 96,
+      color: '黑底彩绣，点缀真实鸟羽',
+      pattern: '百鸟纹、蝶恋花纹、龙纹',
+      meaning: '百鸟衣是苗族最古老最珍贵的祭祀礼服，源于苗族创世神话。相传蝴蝶妈妈生下十二个蛋请吉宇鸟孵化出人类始祖姜央——百鸟衣上的鸟羽和鸟纹便是纪念吉宇鸟的孵化之恩。衣上缀满上百根真实鸟羽与精美绣片，穿着时羽翼轻摇如百鸟朝凤，是苗族刺绣与服饰艺术的巅峰之作。',
+      custom: '一件百鸟衣需采集数百根鸟羽，绣片上以蚕丝线绣出百鸟形态——绣法涵盖破线绣、打籽绣、马尾绣等十余种苗族独有技法。制作周期长达数年，只在鼓藏节祭祖大典由寨中德高望重的长者穿着。百鸟衣已被列为国家级非物质文化遗产。',
     },
     '苗族绣花围腰': {
-      type: '苗族绣花围腰 Miao Embroidered Apron',
-      confidence: 94.5,
-      color: '靛蓝底，五彩丝线绣 Indigo base with multicolor silk embroidery',
-      pattern: '涡旋纹、铜鼓纹、石榴花纹 Spiral, bronze drum, pomegranate flower patterns',
-      meaning: '围腰上的涡旋纹代表江河，记录苗族从黄河、长江到云贵高原的迁徙路线；铜鼓纹象征太阳与权威；石榴花则寄托多子多福的愿望。\n\nThe spiral patterns on the apron represent rivers, recording the Miao migration route from the Yellow River and Yangtze to the Yunnan-Guizhou Plateau; bronze drum motifs symbolize the sun and authority; pomegranate flowers embody wishes for fertility and blessings.',
-      custom: '围腰是苗族女子日常必备，不同支系的围腰长度、纹样差异显著，是识别支系身份的“活族谱”。\n\nThe apron is a daily essential for Miao women; significant variations in length and pattern across different sub-groups make it a “living genealogy” for identifying branch affiliations.',
+      type: '苗族绣花围腰', confidence: 94,
+      color: '靛蓝底，五彩丝线满绣',
+      pattern: '涡旋纹、铜鼓纹、石榴花纹、蝴蝶纹',
+      meaning: '苗族绣花围腰上的涡旋纹被称为"苗族迁徙地图"——每一道螺旋代表一条跨越的江河，从黄河、长江到沅水、清水江，铭刻着苗族先民数千公里的迁徙历程。铜鼓纹居中象征太阳与祖先的权威，石榴花寄托多子多福的祈愿，蝴蝶纹则指向创世神话中的蝴蝶妈妈。一方围腰，就是一部浓缩的苗族文化史。',
+      custom: '围腰是苗族女子日常必备之物，不同支系样式差异显著——是识别支系身份的"活族谱"。女子从小学习绣围腰，到出嫁时需备数条精绣围腰作为嫁妆，围腰的绣工精细程度直接体现女方的聪慧与家教。',
     },
     '苗族银项圈': {
-      type: '苗族银项圈 Miao Silver Collar',
-      confidence: 97.1,
-      color: '纯银，偶有鎏金点缀 Pure silver, occasionally gilt-accented',
-      pattern: '二龙抢宝、游鱼纹、乳钉纹 Two dragons contesting a pearl, swimming fish, nipple-stud patterns',
-      meaning: '银项圈层层叠戴，象征女子家族的财富与地位。二龙抢宝图案寓意守护与尊贵，游鱼纹代表生育繁衍，乳钉纹则源于古代苗族对星辰的崇拜。\n\nSilver collars are worn in layers, symbolizing a woman’s family wealth and status. The two-dragons-contesting-a-pearl motif signifies protection and nobility; the swimming fish pattern represents fertility; the nipple-stud motif originates from ancient Miao star worship.',
-      custom: '苗族银匠被誉为“月光下的艺术家”，一件精美的银项圈需经过熔炼、锻打、拉丝、錾刻等三十余道工序。\n\nMiao silversmiths are hailed as “artists under the moonlight” — a single exquisite silver collar undergoes over thirty processes including smelting, forging, wire-drawing, and engraving.',
-    }
+      type: '苗族银项圈', confidence: 97,
+      color: '纯银银白，层层叠戴',
+      pattern: '二龙抢宝、游鱼纹、乳钉纹、连环纹',
+      meaning: '苗族银项圈以多层叠戴为特色——层数越多代表家族越富裕、地位越高。项圈上的二龙抢宝图案寓意守护与尊贵，游鱼纹代表生育繁衍与年年有余，乳钉纹则源于苗族古人对星辰的崇拜。银项圈不仅是财富的象征，更是连接苗族女性与祖先、自然、宇宙的精神纽带。',
+      custom: '苗族银匠被誉为"月光下的艺术家"——一件银项圈需经历熔炼、锻打、拉丝、錾刻等三十余道工序。银项圈按重量分为三两三、六两六、九两九等吉利数字规格，最重的九两九银项圈通常只在鼓藏节祭祖大典上佩戴，是苗家世代相传的珍宝。',
+    },
   };
 
   // --- 摄像头操作 ---

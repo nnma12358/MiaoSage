@@ -16,24 +16,30 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("yolo-server")
 
 # ---------- 模型路径 ----------
-CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "/app/clothesfp16.onnx")
-SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "/app/best_fp16.onnx")
+CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "/app/Clothes.onnx")
+SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "/app/Sliver.onnx")
 
 # ---------- 类别映射 ----------
 _MIAO_SILVER_CLASSES = {
-    0: "流苏帽 (tassel_hat)",
-    1: "苗族牛角银头饰 (miao_ox_horn_silver_headwear)",
-    2: "苗族银发簪 (miao_silver_hairpin)",
-    3: "苗族银冠 (miao_silver_crown)",
-    4: "苗族银胸饰 (miao_silver_chest_ornament)",
-    5: "苗族银锁 (miao_silver_lock)",
-    6: "苗族银项链 (miao_silver_necklace)",
-    7: "银头饰 (silver_headdress)",
+    0: "全包式银花帽",
+    1: "平顶花丝银头冠",
+    2: "立柱花丝银头冠",
+    3: "银压领",
+    4: "雕花弯形银牛角冠",
+    5: "黑苗银锁",
 }
 
 _MIAO_CLOTHES_CLASSES = {
-    0: "苗族便装 (Miao casual wear)",
-    1: "苗族盛装 (Miao ceremonial dress)",
+    0: "几何挑花麻质上衣",
+    1: "刺绣围腰",
+    2: "单边彩绣百褶裙",
+    3: "多层条纹布包头",
+    4: "小型浮雕银胸吊牌",
+    5: "彩绣直筒绣花长裙",
+    6: "白色头帕",
+    7: "米白麻质短上衣",
+    8: "袖口破线绣纹样",
+    9: "彩色十字挑花包头头巾",
 }
 
 
