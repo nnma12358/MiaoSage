@@ -62,11 +62,19 @@ else:
 # 拦截日语模块 — japanese.py 在模块级别调用 AutoTokenizer.from_pretrained()
 # 会尝试下载 bert-base-japanese-v3，容器无法访问 HuggingFace。
 # 用最小 stub 替换整个日语模块，阻止崩溃。
+# 注意: MeloTTS 内部可能使用关键字参数调用 (如 text=...)，stub 必须兼容。
 # ============================================================
+def _stub_normalize(text, *args, **kwargs):
+    return text
+def _stub_g2p(text, *args, **kwargs):
+    return ([], [], [])
+def _stub_bert(*args, **kwargs):
+    return None
+
 _jp_stub = _types.ModuleType("melo.text.japanese")
-_jp_stub.text_normalize = lambda t: t
-_jp_stub.g2p = lambda t: ([], [], [])
-_jp_stub.get_bert_feature = lambda *a, **k: None
+_jp_stub.text_normalize = _stub_normalize
+_jp_stub.g2p = _stub_g2p
+_jp_stub.get_bert_feature = _stub_bert
 def _distribute_phone(n_phone, n_word):
     phones_per_word = [0] * n_word
     for task in range(n_phone):
@@ -93,26 +101,26 @@ logger.info("NLTK configured (offline, cmudict preloaded)")
 # 查找。打桩阻止此查找，避免无网络环境下的 LookupError 崩溃。
 # ============================================================
 _en_stub = _types.ModuleType("melo.text.english")
-_en_stub.text_normalize = lambda t: t
-_en_stub.g2p = lambda t: ([], [], [])
-_en_stub.get_bert_feature = lambda *a, **k: None
+_en_stub.text_normalize = _stub_normalize
+_en_stub.g2p = _stub_g2p
+_en_stub.get_bert_feature = _stub_bert
 _en_stub.distribute_phone = _distribute_phone
 _sys.modules["melo.text.english"] = _en_stub
 logger.info("English text module stubbed (Chinese TTS does not need NLTK/cmudict)")
 
 # 打桩韩文/法文模块 — 阻止 HuggingFace BERT 下载超时
 _kr_stub = _types.ModuleType("melo.text.korean")
-_kr_stub.text_normalize = lambda t: t
-_kr_stub.g2p = lambda t: ([], [], [])
-_kr_stub.get_bert_feature = lambda *a, **k: None
+_kr_stub.text_normalize = _stub_normalize
+_kr_stub.g2p = _stub_g2p
+_kr_stub.get_bert_feature = _stub_bert
 _kr_stub.distribute_phone = _distribute_phone
 _sys.modules["melo.text.korean"] = _kr_stub
 logger.info("Korean text module stubbed")
 
 _fr_stub = _types.ModuleType("melo.text.french")
-_fr_stub.text_normalize = lambda t: t
-_fr_stub.g2p = lambda t: ([], [], [])
-_fr_stub.get_bert_feature = lambda *a, **k: None
+_fr_stub.text_normalize = _stub_normalize
+_fr_stub.g2p = _stub_g2p
+_fr_stub.get_bert_feature = _stub_bert
 _fr_stub.distribute_phone = _distribute_phone
 _sys.modules["melo.text.french"] = _fr_stub
 logger.info("French text module stubbed")
