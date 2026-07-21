@@ -3725,10 +3725,8 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
       left: 0;
       right: 0;
       z-index: 100;
-      background: transparent;
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-      border-top: none;
+      background: #0e1626;
+      border-top: 1px solid rgba(94,207,209,0.15);
       padding: 12px 8px max(16px, env(safe-area-inset-bottom));
     }
     .voice-btn, .voice-info {
