@@ -206,7 +206,15 @@ def _normalize_tts_text(text: str) -> str:
     text = re.sub(r'\n', '，', text)
     # 13. 清理不可见控制字符
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    # 14. 末尾无标点 → 补句号
+    # 14. 半角句号在中文语境 → 全角句号
+    # LLM (qwen2.5) 常在中文文本中混入半角 "." 句号。
+    # MeloTTS 内部按 "." 分句会产生 ". 下一句内容" 的空前缀句，
+    # 导致该句及后续句子静音 → 文字丢失。
+    text = re.sub(r'(?<=[\u4e00-\u9fff])\.(?=[\u4e00-\u9fff])', '\u3002', text)
+    text = re.sub(r'(?<=[\u4e00-\u9fff])\.\s+(?=[\u4e00-\u9fff])', '\u3002', text)
+    # 句末中文+半角句号+行尾 → 全角
+    text = re.sub(r'(?<=[\u4e00-\u9fff])\.$', '\u3002', text, flags=re.MULTILINE)
+    # 15. 末尾无标点 → 补句号
     text = text.strip()
     if text and text[-1] not in '\u3002\uff0c\uff01\uff1f\u3001':
         text += '\u3002'
