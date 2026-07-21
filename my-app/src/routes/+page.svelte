@@ -1035,9 +1035,9 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
     const short = plain.length > 800 ? plain.substring(0, 800) : plain;
 
     try {
-      // 10s 超时保护：防止远程 TTS 不可达时阻塞 UI
+      // 90s 超时保护：多块合成（800字≈7块×3s/块×3次重试 + 网络延迟）
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const timer = setTimeout(() => ctrl.abort(), 90000);
       const resp = await fetch('/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

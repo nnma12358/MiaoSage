@@ -363,6 +363,34 @@ def _is_silent_wav(wav_bytes: bytes, threshold: int = 35) -> bool:
         return True
 
 
+def _make_silence_wav(duration_sec: float = 0.25, sample_rate: int = 22050) -> bytes:
+    """生成短静音 WAV，用于标记丢失的文本块（保留段落间的停顿感）。"""
+    import struct as _struct
+    num_samples = int(duration_sec * sample_rate)
+    buf = io.BytesIO()
+    with wave.open(buf, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(_struct.pack(f'<{num_samples}h', *([0] * num_samples)))
+    logger.info(f"Silence WAV generated: {duration_sec * 1000:.0f}ms")
+    return buf.getvalue()
+
+
+def _aggressive_normalize(text: str) -> str:
+    """激进归一化：仅保留中文字符、基本标点和数字，用于最后的兜底合成。"""
+    # 保留：中文汉字、中文标点（。，！？、；：）、英文句号逗号、数字、空格
+    allowed = re.compile(r'[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffef0-9a-zA-Z.,!? ]')
+    cleaned = allowed.sub('', text)
+    # 清理连续空白
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if not cleaned:
+        return text  # 如果清理后为空，返回原文
+    if cleaned[-1] not in '\u3002\uff0c\uff01\uff1f\u3001':
+        cleaned += '\u3002'
+    return cleaned
+
+
 class MeloTTS:
     """MeloTTS 封装 — 惰性加载、线程安全、自动 GPU 检测"""
 
@@ -413,19 +441,32 @@ class MeloTTS:
         # 逐块合成（含静音重试）
         loop = asyncio.get_running_loop()
         valid_wavs = []
+        lost_chunks = []  # 记录丢失的文字
         for i, chunk in enumerate(chunks):
             chunk = chunk.strip()
             if not chunk:
                 continue
             if len(chunk) < 3:
-                continue  # 太短的片段跳过
+                logger.info(f"TTS chunk {i} skipped (too short: {len(chunk)} chars)")
+                continue
 
             wav_bytes = await self._synthesize_chunk_with_retry(loop, i, chunk)
             if wav_bytes is not None:
                 valid_wavs.append(wav_bytes)
+                # 检测是否为静音占位（丢失标记）
+                if _is_silent_wav(wav_bytes, threshold=5):
+                    lost_chunks.append((i, chunk))
 
         if not valid_wavs:
-            raise ValueError("all TTS chunks produced silence")
+            raise ValueError("all TTS chunks failed to synthesize")
+
+        # 如有丢失，发出汇总警告（含丢失文字，方便排查）
+        if lost_chunks:
+            lost_texts = " | ".join(f"[{i}] {t[:40]}" for i, t in lost_chunks)
+            logger.warning(
+                f"TTS LOST {len(lost_chunks)}/{len(chunks)} chunks! "
+                f"Lost text: {lost_texts}"
+            )
 
         # 拼接所有有效音频
         combined = _concat_wav_files(valid_wavs)
@@ -433,15 +474,31 @@ class MeloTTS:
         with open(out_path, "wb") as f:
             f.write(combined)
 
-        logger.info(f"TTS combined: {len(valid_wavs)}/{len(chunks)} chunks, {len(combined)} bytes total")
+        logger.info(
+            f"TTS combined: {len(valid_wavs)}/{len(chunks)} chunks, "
+            f"{len(combined)} bytes total, "
+            f"lost={len(lost_chunks)}"
+        )
         return out_path
 
     async def _synthesize_chunk_with_retry(self, loop, idx: int, chunk: str):
-        """合成单个文本块，静音时自动重试一次（追加填充句）"""
-        for attempt in range(2):
-            text_to_synth = chunk if attempt == 0 else chunk + "，苗绣。"
+        """合成单个文本块，3 次递增重试 + 静音兜底，防止文字丢失。
+
+        策略:
+          尝试 0 — 原文合成（已通过 _normalize_tts_text 清洗）
+          尝试 1 — 追加填充句 "，苗绣。" 增加音素上下文
+          尝试 2 — 激进归一化（只保留 CJK+标点+数字），消除所有潜在问题字符
+          全部失败 — 生成 250ms 静音占位，保留段落停顿感，文字记入日志供排查
+        """
+        strategies = [
+            ("原文", chunk),
+            ("+填充句", chunk + "，苗绣。"),
+            ("激进清洗", _aggressive_normalize(chunk)),
+        ]
+
+        for attempt, (label, text_to_synth) in enumerate(strategies):
             if attempt > 0:
-                logger.info(f"TTS chunk {idx} retry with padding: {repr(text_to_synth[:50])}")
+                logger.info(f"TTS chunk {idx} retry [{label}]: {repr(text_to_synth[:60])}")
 
             try:
                 out_path = await loop.run_in_executor(
@@ -458,17 +515,23 @@ class MeloTTS:
                 wav_bytes = _trim_wav_leading_silence(wav_bytes)
 
                 if _is_silent_wav(wav_bytes):
-                    logger.warning(f"TTS chunk {idx} silent (attempt {attempt}), text={repr(chunk[:40])}")
-                    continue  # 重试
+                    logger.warning(f"TTS chunk {idx} silent [{label}], text={repr(chunk[:50])}")
+                    continue  # 下一策略
 
-                logger.info(f"TTS chunk {idx} OK: {len(wav_bytes)} bytes, text={repr(chunk[:30])}")
+                logger.info(f"TTS chunk {idx} OK [{label}]: {len(wav_bytes)} bytes, text={repr(chunk[:30])}")
                 return wav_bytes
 
             except Exception as e:
-                logger.warning(f"TTS chunk {idx} failed (attempt {attempt}): {e}, text={repr(chunk[:40])}")
-                if attempt == 0:
-                    continue  # 重试
-        return None  # 两次都失败，跳过此块
+                logger.warning(f"TTS chunk {idx} error [{label}]: {e}, text={repr(chunk[:50])}")
+                continue  # 下一策略
+
+        # 全部策略失败 → 生成静音占位，丢弃前记录丢失文字
+        logger.error(
+            f"TTS chunk {idx} LOST after 3 attempts! "
+            f"text={repr(chunk[:80])} "
+            f"len={len(chunk)} chars"
+        )
+        return _make_silence_wav(0.25)  # 250ms 静音标记，不丢段落感
 
     def _synthesize_sync(self, text: str, chunk_idx: int = 0, attempt: int = 0) -> str:
         """同步合成（在线程池中运行，避免阻塞事件循环）。
