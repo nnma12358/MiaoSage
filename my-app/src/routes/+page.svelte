@@ -32,8 +32,13 @@ let ttsEnabled = $state(true);       // TTS 语音播报开关
 let micStream = null;                // 录音媒体流
 let showQRCode = $state(false);      // 二维码弹窗
 let qrCodeDataUrl = $state('');      // 二维码 DataURL
-let isMobile = false;                // 移动端检测（一次性，不需要 $state）
+let isMobile = $state(typeof navigator !== 'undefined' && (
+    /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) ||
+    ('ontouchstart' in window && window.innerWidth < 1024)
+  ));
 let fileInputElement;                // 移动端隐藏文件输入（调用原生相机）
+let showPreviewPopup = $state(false);// 移动端图像预览弹窗
+let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层）
 
   // --- 语言切换 ---
   let lang = $state('zh');  // 'zh' | 'en'
@@ -459,6 +464,9 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
       recognitionFailed = false;
       recognitionDone = false;
       identificationResult = null;
+      // 移动端拍照后自动触发 YOLO 识别
+      mobileRecogActive = true;
+      runYoloDetection();
     };
     reader.readAsDataURL(file);
   }
@@ -681,6 +689,7 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     recognitionFailed = false;
     recognitionDone = false;
     detectedPatterns = [];
+    mobileRecogActive = false;  // 关闭移动端识别覆盖层
     // 移动端重新调用原生相机，桌面端重新打开摄像头
     if (isMobile) {
       fileInputElement?.click();
@@ -1097,9 +1106,6 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
 
   // --- 生命周期 ---
   onMount(() => {
-    // 移动端检测
-    isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) ||
-               ('ontouchstart' in window && window.innerWidth < 1024);
     startFpsMonitor();
     startCpuMonitor();
     // 欢迎消息
@@ -1272,12 +1278,12 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
 
         <!-- 框内主内容 -->
         <div class="frame-content">
-          {#if isMobile}
-            <!-- ── 移动端：无实时取景框，仅拍摄按钮 + 照片预览 ── -->
+          <!-- ── 移动端 UI：CSS @media 控制显示，完全独立于桌面端 ── -->
+          <div class="mobile-frame-ui">
             {#if capturedImage}
-              <div class="mobile-preview-wrapper" transition:scale={{ duration: 350, easing: quintOut }}>
-                <img src={capturedImage} alt="拍摄的服饰图片" />
-                <div class="mobile-preview-badge">{t.capturedLabel[lang]}</div>
+              <div class="mobile-capture-done">
+                <img src={capturedImage} alt="拍摄的图片" class="mobile-capture-thumb" />
+                <span class="mobile-capture-text">{lang === 'zh' ? '已拍摄，点击下方按钮识别' : 'Photo taken, tap below to identify'}</span>
               </div>
             {:else}
               <div class="mobile-camera-placeholder">
@@ -1285,66 +1291,56 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
                   <svg viewBox="0 0 24 24" width="28" height="28"><rect x="2" y="6" width="20" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
                   <span>{lang === 'zh' ? '拍照识别' : 'Take Photo'}</span>
                 </button>
-                <p class="mobile-camera-hint">{t.aimLens[lang]}</p>
               </div>
             {/if}
-          {:else if cameraActive}
-            <div class="camera-popup-inner" transition:scale={{ duration: 350, easing: elasticOut }}>
-              <video bind:this={videoElement} autoplay playsinline muted></video>
-              <canvas
-                bind:this={overlayCanvas}
-                class="overlay-canvas"
-                width="640" height="480"
-              ></canvas>
-              <div class="viewfinder-grid">
-                <div class="grid-h"></div>
-                <div class="grid-v"></div>
+          </div>
+
+          <!-- ── 桌面端 UI：CSS @media 控制显示 ── -->
+          <div class="desktop-frame-ui">
+            {#if cameraActive}
+              <div class="camera-popup-inner" transition:scale={{ duration: 350, easing: elasticOut }}>
+                <video bind:this={videoElement} autoplay playsinline muted></video>
+                <canvas bind:this={overlayCanvas} class="overlay-canvas" width="640" height="480"></canvas>
+                <div class="viewfinder-grid">
+                  <div class="grid-h"></div>
+                  <div class="grid-v"></div>
+                </div>
+                {#if detectedPatterns.length > 0}
+                  <div class="camera-label live">● {t.liveDetecting[lang]} — {t.patternsFound[lang]} {detectedPatterns.length} {t.patternsUnit[lang]}</div>
+                {:else}
+                  <div class="camera-label">{t.aimLens[lang]}</div>
+                {/if}
               </div>
-              {#if detectedPatterns.length > 0}
-                <div class="camera-label live">● {t.liveDetecting[lang]} — {t.patternsFound[lang]} {detectedPatterns.length} {t.patternsUnit[lang]}</div>
-              {:else}
-                <div class="camera-label">{t.aimLens[lang]}</div>
-              {/if}
-            </div>
-          {:else if capturedImage}
-            <div class="preview-image-wrapper" transition:scale={{ duration: 380, easing: quintOut }}>
-              <img src={capturedImage} alt="拍摄的服饰图片" />
-              <canvas
-                bind:this={overlayCanvas}
-                class="overlay-canvas"
-                width="640" height="480"
-              ></canvas>
-              <div class="preview-overlay-label">{t.capturedLabel[lang]}</div>
-            </div>
-          {:else}
-            <div class="frame-placeholder">
-              <div class="placeholder-illustration">
-                <svg viewBox="0 0 160 120" width="140" height="105">
-                  <!-- 远山 -->
-                  <path d="M0 110 L0 80 Q30 55 60 72 Q90 50 120 68 Q150 48 160 60 L160 110 Z" fill="#111d2e" opacity="0.5"/>
-                  <path d="M0 110 L0 90 Q40 65 80 82 Q120 60 160 78 L160 110 Z" fill="#0d1624" opacity="0.4"/>
-                  <!-- 风雨桥廊 -->
-                  <path d="M30 105 L30 72 L50 60 L70 72 L70 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.6"/>
-                  <path d="M70 105 L70 72 L90 60 L110 72 L110 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.6"/>
-                  <path d="M110 105 L110 72 L130 60 L150 72 L150 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.5"/>
-                  <!-- 桥廊顶部 -->
-                  <path d="M30 72 L50 58 L70 72 L90 58 L110 72 L130 58 L150 72" fill="none" stroke="#2a4a6a" stroke-width="0.9" opacity="0.4"/>
-                  <!-- 桥柱 -->
-                  <rect x="42" y="80" width="2" height="25" fill="#1a3048" opacity="0.4"/>
-                  <rect x="52" y="80" width="2" height="25" fill="#1a3048" opacity="0.4"/>
-                  <rect x="82" y="80" width="2" height="25" fill="#1a3048" opacity="0.35"/>
-                  <rect x="92" y="80" width="2" height="25" fill="#1a3048" opacity="0.35"/>
-                  <!-- 蝴蝶装饰 -->
-                  <path d="M78 42 Q74 34 72 38 Q70 42 78 42" fill="none" stroke="#3a6a8a" stroke-width="0.7" opacity="0.5"/>
-                  <path d="M78 42 Q82 34 84 38 Q86 42 78 42" fill="none" stroke="#3a6a8a" stroke-width="0.7" opacity="0.5"/>
-                  <!-- 飞鸟 -->
-                  <path d="M120 35 Q124 30 128 35" fill="none" stroke="#2a4a6a" stroke-width="0.6" opacity="0.4"/>
-                  <path d="M132 30 Q136 25 140 30" fill="none" stroke="#2a4a6a" stroke-width="0.5" opacity="0.3"/>
-                </svg>
+            {:else if capturedImage}
+              <div class="preview-image-wrapper" transition:scale={{ duration: 380, easing: quintOut }}>
+                <img src={capturedImage} alt="拍摄的服饰图片" />
+                <canvas bind:this={overlayCanvas} class="overlay-canvas" width="640" height="480"></canvas>
+                <div class="preview-overlay-label">{t.capturedLabel[lang]}</div>
               </div>
-              <p class="placeholder-hint">{t.placeholderHint1[lang]}<br/>{t.placeholderHint2[lang]}</p>
-            </div>
-          {/if}
+            {:else}
+              <div class="frame-placeholder">
+                <div class="placeholder-illustration">
+                  <svg viewBox="0 0 160 120" width="140" height="105">
+                    <path d="M0 110 L0 80 Q30 55 60 72 Q90 50 120 68 Q150 48 160 60 L160 110 Z" fill="#111d2e" opacity="0.5"/>
+                    <path d="M0 110 L0 90 Q40 65 80 82 Q120 60 160 78 L160 110 Z" fill="#0d1624" opacity="0.4"/>
+                    <path d="M30 105 L30 72 L50 60 L70 72 L70 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.6"/>
+                    <path d="M70 105 L70 72 L90 60 L110 72 L110 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.6"/>
+                    <path d="M110 105 L110 72 L130 60 L150 72 L150 105" fill="none" stroke="#2a4a6a" stroke-width="1.2" opacity="0.5"/>
+                    <path d="M30 72 L50 58 L70 72 L90 58 L110 72 L130 58 L150 72" fill="none" stroke="#2a4a6a" stroke-width="0.9" opacity="0.4"/>
+                    <rect x="42" y="80" width="2" height="25" fill="#1a3048" opacity="0.4"/>
+                    <rect x="52" y="80" width="2" height="25" fill="#1a3048" opacity="0.4"/>
+                    <rect x="82" y="80" width="2" height="25" fill="#1a3048" opacity="0.35"/>
+                    <rect x="92" y="80" width="2" height="25" fill="#1a3048" opacity="0.35"/>
+                    <path d="M78 42 Q74 34 72 38 Q70 42 78 42" fill="none" stroke="#3a6a8a" stroke-width="0.7" opacity="0.5"/>
+                    <path d="M78 42 Q82 34 84 38 Q86 42 78 42" fill="none" stroke="#3a6a8a" stroke-width="0.7" opacity="0.5"/>
+                    <path d="M120 35 Q124 30 128 35" fill="none" stroke="#2a4a6a" stroke-width="0.6" opacity="0.4"/>
+                    <path d="M132 30 Q136 25 140 30" fill="none" stroke="#2a4a6a" stroke-width="0.5" opacity="0.3"/>
+                  </svg>
+                </div>
+                <p class="placeholder-hint">{t.placeholderHint1[lang]}<br/>{t.placeholderHint2[lang]}</p>
+              </div>
+            {/if}
+          </div>
         </div>
       </div>
 
@@ -1636,7 +1632,19 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     </button>
   </nav>
 
-  <!-- 底部语音交互栏 -->
+  <!-- 底部语音交互栏（移动端：精简3按钮） -->
+  <footer class="voice-bar mobile-only">
+    <button class="mobbar-btn" onclick={openCamera} title="拍照">📷</button>
+    <button class="mobbar-btn mic-btn" onclick={toggleListening} class:recording={isRecording} title={isRecording ? '录音中…' : '语音'}>
+      <span class="mic-inner">{isRecording ? '🔴' : '🎤'}</span>
+      {#if isRecording}
+        <span class="mic-ripple"></span>
+        <span class="mic-ripple delay"></span>
+      {/if}
+    </button>
+    <button class="mobbar-btn" onclick={toggleTTS} title="播报">{ttsEnabled ? '🔊' : '🔇'}</button>
+  </footer>
+
   <footer class="voice-bar">
     <!-- TTS 语音播报开关 -->
     <button class="btn-tts-toggle" onclick={toggleTTS} title={ttsEnabled ? (lang === 'zh' ? '关闭语音播报' : 'Mute TTS') : (lang === 'zh' ? '开启语音播报' : 'Enable TTS')}>
@@ -1665,6 +1673,66 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     </button>
     <span class="voice-info">{t.voiceInfo[lang]}</span>
   </footer>
+
+  <!-- ── 移动端识别反馈覆盖层 ── -->
+  {#if isMobile && mobileRecogActive && capturedImage}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_interactive_supports_focus -->
+    <div class="mobile-recog-overlay" onclick={() => mobileRecogActive = false} role="dialog" aria-modal="true" tabindex="-1" transition:fade={{ duration: 250 }}>
+      <div class="mobile-recog-card" onclick={(e) => e.stopPropagation()} transition:scale={{ duration: 350, easing: elasticOut }}>
+        <!-- 关闭按钮 -->
+        <button class="recog-close" onclick={() => mobileRecogActive = false} aria-label="关闭">✕</button>
+
+        <!-- 预览图 -->
+        <div class="recog-image-box">
+          <img src={capturedImage} alt="拍摄图片" class="recog-preview-img" />
+          {#if isIdentifying}
+            <div class="recog-scanning-overlay">
+              <div class="recog-spinner-box">
+                <span class="recog-spinner"></span>
+                <span class="recog-scan-label">{lang === 'zh' ? 'YOLO 识别中…' : 'YOLO Identifying…'}</span>
+              </div>
+              <!-- 扫描线动画 -->
+              <div class="scan-line"></div>
+            </div>
+          {/if}
+        </div>
+
+        <!-- 状态文字 -->
+        <div class="recog-status">
+          {#if isIdentifying}
+            <div class="recog-status-identifying">
+              <span class="recog-dot-pulse"></span>
+              {lang === 'zh' ? '正在分析苗族服饰特征…' : 'Analyzing Miao costume features…'}
+            </div>
+          {:else if recognitionDone && identificationResult}
+            <div class="recog-status-success">
+              <span class="recog-check">✓</span>
+              <span class="recog-type-label">{identificationResult.type}</span>
+              <span class="recog-conf-badge">{identificationResult.confidence}%</span>
+            </div>
+            <p class="recog-meaning-preview">{identificationResult.meaning?.slice(0, 80)}…</p>
+          {:else if recognitionDone && recognitionFailed}
+            <div class="recog-status-fail">
+              <span class="recog-fail-icon">⚠️</span>
+              {lang === 'zh' ? '未识别到苗族服饰，请调整角度重试' : 'No Miao garment detected, try again'}
+            </div>
+          {/if}
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="recog-actions">
+          {#if recognitionDone}
+            <button class="recog-btn recog-retake" onclick={retakePhoto}>
+              <span>📷</span> {lang === 'zh' ? '重新拍摄' : 'Retake'}
+            </button>
+          {/if}
+          <button class="recog-btn recog-dismiss" onclick={() => mobileRecogActive = false}>
+            {lang === 'zh' ? '关闭' : 'Close'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- 二维码弹窗 -->
   {#if showQRCode}
@@ -2323,6 +2391,10 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     line-height: 1.6;
     letter-spacing: 0.04em;
   }
+
+  /* ── 移动/桌面 UI 隔离基类 ── */
+  .mobile-frame-ui { display: none !important; }
+  .desktop-frame-ui { display: contents !important; }
 
   /* ========== 左栏操作按钮组 ========== */
   .camera-actions {
@@ -3121,6 +3193,12 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     gap: 12px;
   }
 
+  /* 移动端工具栏：桌面端隐藏，手机端显示 */
+  .mobile-only { display: none !important; }
+  @media (max-width: 768px) {
+    .mobile-only { display: flex !important; }
+  }
+
   /* TTS 语音播报开关 */
   .btn-tts-toggle {
     width: 36px;
@@ -3434,7 +3512,8 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     .perf-item:first-child {
       display: inline;  /* 仅保留 FPS */
     }
-    .btn-qr, .btn-lang {
+    .btn-qr { display: none; }
+    .btn-lang {
       width: 28px;
       height: 24px;
       font-size: 0.6rem;
@@ -3444,23 +3523,18 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
     .main-layout {
       flex-direction: column;
       gap: 0;
+      overflow-y: auto;
     }
     .panel-left {
-      width: 100%;
-      max-height: none;
-      flex-shrink: 0;
-      order: 1;
-      padding: 6px 8px;
-      overflow-y: visible;
+      display: none !important;  /* 手机端完全隐藏图像预览区 */
     }
     .panel-chat {
       order: 2;
       flex: 1;
-      min-height: 320px;
       padding: 6px 8px;
     }
     .panel-right {
-      display: none;  /* 手机端隐藏侧栏 */
+      display: none;
     }
     .panel-title {
       font-size: 0.78rem;
@@ -3485,6 +3559,10 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
       background: transparent;
       min-height: 0;
     }
+
+    /* CSS 驱动移动/桌面 UI 隔离（!important 确保绝对生效） */
+    .mobile-frame-ui { display: block !important; }
+    .desktop-frame-ui { display: none !important; }
 
     /* 移动端相机占位 */
     .mobile-camera-placeholder {
@@ -3519,28 +3597,45 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
       margin: 0;
     }
 
-    /* 移动端照片预览 */
-    .mobile-preview-wrapper {
-      position: relative;
-      border-radius: 10px;
-      overflow: hidden;
-      border: 1px solid rgba(74, 110, 140, 0.3);
+    /* 移动端拍摄完成提示 */
+    .mobile-capture-done {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 0;
     }
-    .mobile-preview-wrapper img {
+    .mobile-capture-thumb {
       width: 100%;
-      display: block;
-      max-height: 180px;
+      max-width: 200px;
+      max-height: 120px;
       object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid rgba(94,207,209,0.3);
+      display: block;
     }
-    .mobile-preview-badge {
-      position: absolute;
-      bottom: 6px;
-      right: 6px;
-      background: rgba(0,0,0,0.7);
+    .mobile-capture-text {
+      font-size: 0.72rem;
       color: #7aaccc;
-      font-size: 0.6rem;
-      padding: 2px 8px;
-      border-radius: 8px;
+    }
+
+    /* 聊天面板 — 移动端输入框 fixed，与语音栏同层 */
+    .chat-input {
+      position: fixed;
+      bottom: 66px;
+      left: 0;
+      right: 0;
+      z-index: 99;
+      background: #0e1626;  /* 不透明白底，防止文字穿透 */
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 8px 10px 8px;
+      margin-top: 0;
+      border-top: 1px solid rgba(94,207,209,0.2);
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+    }
+    .chat-messages {
+      padding-bottom: 130px;  /* 输入框 ~60px + 按钮行 ~70px */
     }
 
     /* 隐藏桌面端实时取景元素 */
@@ -3604,46 +3699,295 @@ let fileInputElement;                // 移动端隐藏文件输入（调用原�
       font-size: 0.7rem;
     }
 
-    /* 底部导航 — 手机端主交互区 */
+    /* 底部导航 — 手机端隐藏 */
     .bottom-nav {
-      padding: 2px 6px;
-      gap: 0;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-    .nav-tab {
-      padding: 6px 3px 4px;
-      gap: 2px;
-      min-width: 56px;
-      flex-shrink: 0;
-    }
-    .nav-tab .nav-icon {
-      font-size: 0.85rem;
-    }
-    .nav-tab .nav-label {
-      font-size: 0.58rem;
-      white-space: nowrap;
-    }
-
-    /* 语音栏 */
-    .voice-bar {
-      padding: 6px 10px;
-      gap: 8px;
-    }
-    .voice-btn {
-      padding: 8px 14px;
-      font-size: 0.8rem;
-      min-height: 40px;
-    }
-    .voice-info {
       display: none;
     }
-    .btn-tts-toggle {
-      width: 32px;
-      height: 32px;
-      font-size: 1rem;
+
+    /* 语音栏 — 移动端：紧贴输入框下方，无背景 */
+    .voice-bar {
+      padding: 6px 8px;
+      gap: 6px;
     }
+    .voice-bar:not(.mobile-only) {
+      display: none;
+    }
+    .voice-bar.mobile-only {
+      display: flex;
+      justify-content: space-evenly;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      border-top: none;
+      padding: 12px 8px max(16px, env(safe-area-inset-bottom));
+    }
+    .voice-btn, .voice-info {
+      display: none;
+    }
+    .mobbar-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid rgba(94,207,209,0.3);
+      background: rgba(94,207,209,0.08);
+      font-size: 1.2rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      color: #5ecfd1;
+      position: relative;
+    }
+    .mobbar-btn:active {
+      background: rgba(94,207,209,0.3);
+      transform: scale(0.92);
+    }
+
+    /* ── 麦克风录音特效 ── */
+    .mobbar-btn.mic-btn {
+      transition: all 0.35s ease;
+    }
+    .mobbar-btn.mic-btn.recording {
+      background: rgba(255, 70, 70, 0.18);
+      border-color: rgba(255, 90, 90, 0.6);
+      color: #ff6b6b;
+      box-shadow: 0 0 20px rgba(255, 70, 70, 0.45);
+      animation: micPulse 1.2s ease-in-out infinite;
+    }
+    .mic-inner {
+      position: relative;
+      z-index: 2;
+    }
+    /* 扩散波纹 */
+    .mic-ripple {
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 90, 90, 0.5);
+      animation: rippleOut 1.5s ease-out infinite;
+      pointer-events: none;
+    }
+    .mic-ripple.delay {
+      animation-delay: 0.75s;
+    }
+
+    @keyframes micPulse {
+      0%, 100% { box-shadow: 0 0 12px rgba(255, 70, 70, 0.35); }
+      50%      { box-shadow: 0 0 28px rgba(255, 70, 70, 0.65); }
+    }
+    @keyframes rippleOut {
+      0%   { transform: scale(0.8); opacity: 0.9; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+    .btn-tts-toggle { display: none; }
+
+    /* ── 移动端识别反馈覆盖层 ── */
+    .mobile-recog-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(6, 12, 22, 0.88);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .mobile-recog-card {
+      position: relative;
+      background: linear-gradient(160deg, #101e32, #0c1828);
+      border: 1px solid rgba(94, 207, 209, 0.3);
+      border-radius: 18px;
+      padding: 20px 16px 16px;
+      width: 100%;
+      max-width: 340px;
+      box-shadow: 0 0 40px rgba(94, 207, 209, 0.12), 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .recog-close {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.05);
+      color: #7aaccc;
+      font-size: 0.85rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+    }
+    .recog-image-box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4/3;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(94,207,209,0.2);
+      margin-bottom: 12px;
+      background: #060c16;
+    }
+    .recog-preview-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    /* 扫描中覆盖层 */
+    .recog-scanning-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(6, 12, 22, 0.55);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .recog-spinner-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      z-index: 2;
+    }
+    .recog-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(94,207,209,0.2);
+      border-top-color: #5ecfd1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .recog-scan-label {
+      font-size: 0.82rem;
+      color: #5ecfd1;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    /* 扫描线 */
+    .scan-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, #5ecfd1, transparent);
+      box-shadow: 0 0 12px rgba(94,207,209,0.6);
+      animation: scanMove 1.8s ease-in-out infinite;
+      z-index: 1;
+    }
+    @keyframes scanMove {
+      0%   { top: 0%; }
+      50%  { top: 95%; }
+      100% { top: 0%; }
+    }
+
+    /* 状态区 */
+    .recog-status {
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .recog-status-identifying {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: #8ab8d0;
+    }
+    .recog-dot-pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #5ecfd1;
+      animation: livePulse 1.2s ease-in-out infinite;
+      display: inline-block;
+    }
+    .recog-status-success {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .recog-check {
+      color: #4cd9b2;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+    .recog-type-label {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #d0e8ff;
+    }
+    .recog-conf-badge {
+      font-size: 0.7rem;
+      background: rgba(40, 90, 60, 0.5);
+      color: #60c090;
+      padding: 2px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(90, 154, 106, 0.3);
+    }
+    .recog-meaning-preview {
+      font-size: 0.7rem;
+      color: #6a9ab0;
+      line-height: 1.5;
+      margin: 8px 0 0;
+      text-align: left;
+      padding: 0 4px;
+    }
+    .recog-status-fail {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 0.82rem;
+      color: #e0a060;
+      font-weight: 600;
+    }
+    .recog-fail-icon { font-size: 1.1rem; }
+
+    /* 操作按钮 */
+    .recog-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .recog-btn {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 22px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+      letter-spacing: 0.04em;
+    }
+    .recog-retake {
+      background: linear-gradient(145deg, #c0a86a, #8a7040);
+      border: none;
+      color: #0a1220;
+      box-shadow: 0 3px 12px rgba(192, 168, 106, 0.3);
+    }
+    .recog-retake:active { transform: scale(0.96); }
+    .recog-dismiss {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #7aaccc;
+    }
+    .recog-dismiss:active { background: rgba(255,255,255,0.12); }
 
     /* 欢迎卡片 */
     .miao-girl-card {

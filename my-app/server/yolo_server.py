@@ -244,6 +244,37 @@ def health():
     }
 
 
+def _normalize_response(pipeline_result: dict) -> dict:
+    """将 Pipeline 检测结果转换为前端期望的扁平格式
+
+    前端期望: { detections: [{ class, confidence, bbox: [x, y, w, h] }] }
+    服务返回: { clothes: [...], silver: [...], silver_filtered: [...] }
+    其中 bbox 为 { x1, y1, x2, y2 } 字典
+    """
+    detections = []
+
+    # 服装检测结果
+    for d in pipeline_result.get("clothes", []):
+        b = d["bbox"]
+        detections.append({
+            "class": d["class"],
+            "confidence": d["confidence"],
+            "bbox": [b["x1"], b["y1"], b["x2"] - b["x1"], b["y2"] - b["y1"]],
+        })
+
+    # 银饰检测结果（优先使用 filtered，无人物框时用原始）
+    silver_dets = pipeline_result.get("silver_filtered") or pipeline_result.get("silver", [])
+    for d in silver_dets:
+        b = d["bbox"]
+        detections.append({
+            "class": d["class"],
+            "confidence": d["confidence"],
+            "bbox": [b["x1"], b["y1"], b["x2"] - b["x1"], b["y2"] - b["y1"]],
+        })
+
+    return {"detections": detections}
+
+
 @app.post("/detect")
 async def detect(
     image: UploadFile = File(...),
@@ -260,7 +291,13 @@ async def detect(
 
     result = detector.detect(img, mode=mode, use_person_filter=person_filter)
     result["success"] = True
-    return result
+
+    # 转换为前端兼容格式
+    normalized = _normalize_response(result)
+    normalized["success"] = True
+    normalized["mode"] = result["mode"]
+    normalized["cost_ms"] = result.get("cost_ms", {})
+    return normalized
 
 
 if __name__ == "__main__":

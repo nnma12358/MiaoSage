@@ -271,7 +271,8 @@ async def detect(image: UploadFile = File(...)):
     t0 = time.perf_counter()
     try:
         await yolo_guard.acquire()
-        r = http_requests.post(f"{YOLO_URL}/detect",
+        # 默认 pipeline 模式：服装→银饰串行检测，双模型全覆盖
+        r = http_requests.post(f"{YOLO_URL}/detect?mode=pipeline",
             files={"image": (image.filename or "img.jpg", contents, image.content_type or "image/jpeg")},
             timeout=60)
         elapsed = round((time.perf_counter() - t0) * 1000, 1)

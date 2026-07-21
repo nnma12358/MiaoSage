@@ -35,6 +35,7 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/ &&
     pip install --no-cache-dir /app/MeloTTS/ && \
     ln -sf /usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib/libcudart.so.12 \
            /usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib/libcudart.so.13 && \
+    python -m nltk.downloader cmudict -d /root/nltk_data && \
     pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip install --no-cache-dir fastapi uvicorn python-multipart && \
     rm -rf /root/.cache/pip/*

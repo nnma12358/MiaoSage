@@ -13,7 +13,7 @@ MeloTTS: 开源高音质中文 TTS，本地推理，无需联网。
   TTS_SPEED=1.0           # 语速 (0.5-2.0)
   TTS_MAX_LEN=300         # 最大文本长度
 """
-import os, sys, logging, tempfile, asyncio, concurrent.futures, io, wave, struct, re, json
+import os, sys, logging, tempfile, asyncio, concurrent.futures, io, wave, struct, re, json, uuid, time
 from pathlib import Path
 
 # 确保 torch/torchaudio 共享库可被加载
@@ -86,6 +86,19 @@ import nltk as _nltk
 _nltk.data.path = ["/root/nltk_data"]
 _nltk.download = lambda *a, **k: False
 logger.info("NLTK configured (offline, cmudict preloaded)")
+
+# ============================================================
+# 打桩英文文本模块 — 中文 TTS 完全不依赖 NLTK/cmudict
+# 但 MeloTTS 在导入时会遍历所有语言模块，触发 nltk.corpus.cmudict
+# 查找。打桩阻止此查找，避免无网络环境下的 LookupError 崩溃。
+# ============================================================
+_en_stub = _types.ModuleType("melo.text.english")
+_en_stub.text_normalize = lambda t: t
+_en_stub.g2p = lambda t: ([], [], [])
+_en_stub.get_bert_feature = lambda *a, **k: None
+_en_stub.distribute_phone = _distribute_phone
+_sys.modules["melo.text.english"] = _en_stub
+logger.info("English text module stubbed (Chinese TTS does not need NLTK/cmudict)")
 
 
 def _detect_device() -> str:
@@ -171,11 +184,12 @@ def _normalize_tts_text(text: str) -> str:
     return text
 
 
-def _chunk_text(text: str, max_chars: int = 80) -> list[str]:
+def _chunk_text(text: str, max_chars: int = 120) -> list[str]:
     """将长文本按句子边界分割为短块，避免 MeloTTS 单次合成过长导致静音。
 
-    MeloTTS/VITS 对单次输入长度敏感：超过约 100 字可能产生音素对齐错误
+    MeloTTS/VITS 对单次输入长度敏感：超过约 150 字可能产生音素对齐错误
     或模型注意力崩溃，导致后半段静音。分句合成可隔离故障范围。
+    120 字/块在 VITS 注意力窗口内，同时保证足够上下文避免短句静音。
     """
     # 按句末标点分割
     sentences = re.split(r'(?<=[\u3002\uff01\uff1f\u2026])', text)
@@ -315,8 +329,8 @@ def _concat_wav_files(wav_list: list[bytes]) -> bytes:
     return buf.getvalue()
 
 
-def _is_silent_wav(wav_bytes: bytes, threshold: int = 50) -> bool:
-    """检测 WAV 音频是否近乎全静音。阈值 50，避免误判短句。"""
+def _is_silent_wav(wav_bytes: bytes, threshold: int = 35) -> bool:
+    """检测 WAV 音频是否近乎全静音。阈值 35，避免误判轻柔短句。"""
     try:
         data = wav_bytes[44:]  # 跳过 44 字节 WAV 头
         if len(data) < 50:     # 极短音频视为无效
@@ -351,11 +365,10 @@ class MeloTTS:
         logger.info(f"MeloTTS model loaded (device={self._device}, speakers={n_speakers})")
 
     async def synthesize(self, text: str) -> str:
-        """异步合成入口 — 分句合成，隔离静音故障。
+        """异步合成入口 — 分句合成 + 静音重试，隔离故障。
 
-        策略: 将文本按句子边界切分为短块（≤80字/块），逐块合成，
-        跳过静音块，最后拼接所有有效音频。避免单个 markdown 残留字符
-        导致整段静音。
+        策略: 将文本按句子边界切分为短块（≤120字/块），逐块合成，
+        静音块自动重试（追加填充句），最后拼接所有有效音频。
         """
         text = text.strip()
         if not text:
@@ -373,10 +386,10 @@ class MeloTTS:
             logger.info(f"Text padded to {len(text)} chars")
 
         # 分句
-        chunks = _chunk_text(text, max_chars=80)
+        chunks = _chunk_text(text, max_chars=120)
         logger.info(f"TTS chunked: {len(chunks)} segments, total {len(text)} chars")
 
-        # 逐块合成
+        # 逐块合成（含静音重试）
         loop = asyncio.get_running_loop()
         valid_wavs = []
         for i, chunk in enumerate(chunks):
@@ -386,9 +399,33 @@ class MeloTTS:
             if len(chunk) < 3:
                 continue  # 太短的片段跳过
 
-            try:
-                out_path = await loop.run_in_executor(_thread_pool, self._synthesize_sync, chunk)
+            wav_bytes = await self._synthesize_chunk_with_retry(loop, i, chunk)
+            if wav_bytes is not None:
+                valid_wavs.append(wav_bytes)
 
+        if not valid_wavs:
+            raise ValueError("all TTS chunks produced silence")
+
+        # 拼接所有有效音频
+        combined = _concat_wav_files(valid_wavs)
+        out_path = os.path.join(self._tmp_dir, f"tts_melo_{os.getpid()}_{uuid.uuid4().hex[:8]}.wav")
+        with open(out_path, "wb") as f:
+            f.write(combined)
+
+        logger.info(f"TTS combined: {len(valid_wavs)}/{len(chunks)} chunks, {len(combined)} bytes total")
+        return out_path
+
+    async def _synthesize_chunk_with_retry(self, loop, idx: int, chunk: str):
+        """合成单个文本块，静音时自动重试一次（追加填充句）"""
+        for attempt in range(2):
+            text_to_synth = chunk if attempt == 0 else chunk + "，苗绣。"
+            if attempt > 0:
+                logger.info(f"TTS chunk {idx} retry with padding: {repr(text_to_synth[:50])}")
+
+            try:
+                out_path = await loop.run_in_executor(
+                    _thread_pool, self._synthesize_sync, text_to_synth, idx, attempt
+                )
                 with open(out_path, "rb") as f:
                     wav_bytes = f.read()
                 try:
@@ -400,36 +437,25 @@ class MeloTTS:
                 wav_bytes = _trim_wav_leading_silence(wav_bytes)
 
                 if _is_silent_wav(wav_bytes):
-                    logger.warning(f"TTS chunk {i} silent, skipped: {repr(chunk[:40])}")
-                    continue
+                    logger.warning(f"TTS chunk {idx} silent (attempt {attempt}), text={repr(chunk[:40])}")
+                    continue  # 重试
 
-                valid_wavs.append(wav_bytes)
-                logger.info(f"TTS chunk {i} OK: {len(wav_bytes)} bytes, text={repr(chunk[:30])}")
+                logger.info(f"TTS chunk {idx} OK: {len(wav_bytes)} bytes, text={repr(chunk[:30])}")
+                return wav_bytes
 
             except Exception as e:
-                logger.warning(f"TTS chunk {i} failed: {e}, text={repr(chunk[:40])}")
-                continue
+                logger.warning(f"TTS chunk {idx} failed (attempt {attempt}): {e}, text={repr(chunk[:40])}")
+                if attempt == 0:
+                    continue  # 重试
+        return None  # 两次都失败，跳过此块
 
-        if not valid_wavs:
-            raise ValueError("all TTS chunks produced silence")
-
-        # 拼接所有有效音频
-        combined = _concat_wav_files(valid_wavs)
-        out_path = os.path.join(self._tmp_dir, f"tts_melo_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav")
-        with open(out_path, "wb") as f:
-            f.write(combined)
-
-        logger.info(f"TTS combined: {len(valid_wavs)}/{len(chunks)} chunks, {len(combined)} bytes total")
-        return out_path
-
-    def _synthesize_sync(self, text: str) -> str:
-        """同步合成（在线程池中运行，避免阻塞事件循环）"""
+    def _synthesize_sync(self, text: str, chunk_idx: int = 0, attempt: int = 0) -> str:
+        """同步合成（在线程池中运行，避免阻塞事件循环）。
+        文件名含时间戳+索引，避免 hash 碰撞导致线程池写冲突。"""
         self._load_model()
 
-        out_path = os.path.join(
-            self._tmp_dir,
-            f"tts_melo_{os.getpid()}_{hash(text) & 0x7FFFFFFF}.wav"
-        )
+        uid = f"{int(time.time() * 1000)}_{chunk_idx}_{attempt}_{uuid.uuid4().hex[:6]}"
+        out_path = os.path.join(self._tmp_dir, f"tts_melo_{uid}.wav")
 
         # MeloTTS API: tts_to_file(text, speaker_id, output_path, speed=1.0)
         self._model.tts_to_file(
