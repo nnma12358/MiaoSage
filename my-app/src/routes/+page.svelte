@@ -3528,7 +3528,8 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
     .main-layout {
       flex-direction: column;
       gap: 0;
-      overflow-y: auto;
+      overflow: hidden;         /* 禁止外层滚动，由内部 chat-messages 管理 */
+      padding-bottom: 130px;   /* 为底部固定栏留空（输入框 + 语音栏） */
     }
     .panel-left {
       display: none !important;  /* 手机端完全隐藏图像预览区 */
@@ -3536,7 +3537,9 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
     .panel-chat {
       order: 2;
       flex: 1;
-      padding: 6px 8px;
+      min-height: 0;           /* flex 子元素允许收缩 */
+      overflow: hidden;        /* 禁止面板级滚动，由 chat-messages 负责 */
+      padding: 6px 8px 0;
     }
     .panel-right {
       display: none;
@@ -3640,7 +3643,7 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
       box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
     }
     .chat-messages {
-      padding-bottom: 130px;  /* 输入框 ~60px + 按钮行 ~70px */
+      padding-bottom: 12px;   /* 微小留白即可，大间距由 main-layout padding-bottom 保障 */
     }
 
     /* 隐藏桌面端实时取景元素 */
