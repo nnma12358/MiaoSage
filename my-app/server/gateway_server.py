@@ -315,9 +315,9 @@ async def tts_synthesize(request: Request):
     except Exception:
         raise HTTPException(400, "无效 JSON")
     t0 = time.perf_counter()
-    # Swarm 模式下 TTS 在远程 PC，网络延迟较高，超时放宽到 180s
+    # Swarm 模式下 TTS 在远程 PC，超时 15s（PC 本地 30s）
     tts_is_remote = "127.0.0.1" not in TTS_URL and "localhost" not in TTS_URL
-    tts_timeout = 180 if tts_is_remote else 120
+    tts_timeout = 15 if tts_is_remote else 30
     try:
         r = http_requests.post(f"{TTS_URL}/tts", json=body, timeout=tts_timeout)
         proxy_latency.record(round((time.perf_counter() - t0) * 1000, 1))

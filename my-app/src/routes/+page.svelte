@@ -1035,11 +1035,16 @@ let mobileRecogActive = $state(false); // 移动端识别进行中（覆盖层�
     const short = plain.length > 800 ? plain.substring(0, 800) : plain;
 
     try {
+      // 10s 超时保护：防止远程 TTS 不可达时阻塞 UI
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
       const resp = await fetch('/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: short })
+        body: JSON.stringify({ text: short }),
+        signal: ctrl.signal
       });
+      clearTimeout(timer);
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
