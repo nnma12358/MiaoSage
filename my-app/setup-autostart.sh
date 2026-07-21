@@ -25,12 +25,27 @@ fi
 
 # ---- 检测 docker / docker compose 路径 ----
 DOCKER_BIN=$(which docker)
-COMPOSE_BIN=$(which "docker-compose" 2>/dev/null || echo "")
-if [ -z "$COMPOSE_BIN" ]; then
-    # Docker v20+ 内置 compose 子命令
+if [ -z "$DOCKER_BIN" ]; then
+    echo "错误: 未找到 docker，请先安装 Docker"
+    exit 1
+fi
+
+# 优先使用 docker compose (v20+)，其次 docker-compose (v1)
+COMPOSE_CMD=""
+if $DOCKER_BIN compose version &>/dev/null; then
     COMPOSE_CMD="$DOCKER_BIN compose"
+elif which docker-compose &>/dev/null; then
+    COMPOSE_CMD="docker-compose"
 else
-    COMPOSE_CMD="$COMPOSE_BIN"
+    echo "错误: 未找到 docker compose 或 docker-compose"
+    exit 1
+fi
+echo "  Docker: $DOCKER_BIN"
+echo "  Compose: $COMPOSE_CMD"
+
+# 预检 compose 文件
+if ! $COMPOSE_CMD -f "$COMPOSE_FILE" config --quiet &>/dev/null; then
+    echo "警告: compose 文件校验失败，尝试继续..."
 fi
 
 echo "============================================"
@@ -56,9 +71,9 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=SERVICE_DIR
 ExecStartPre=/bin/sleep 10
-ExecStart=SERVICE_DOCKER compose -f SERVICE_COMPOSE PROFILE_ARG up -d
-ExecStop=SERVICE_DOCKER compose -f SERVICE_COMPOSE PROFILE_ARG down
-ExecReload=SERVICE_DOCKER compose -f SERVICE_COMPOSE PROFILE_ARG up -d --force-recreate
+ExecStart=SERVICE_COMPOSE_CMD -f SERVICE_COMPOSE PROFILE_ARG up -d
+ExecStop=SERVICE_COMPOSE_CMD -f SERVICE_COMPOSE PROFILE_ARG down
+ExecReload=SERVICE_COMPOSE_CMD -f SERVICE_COMPOSE PROFILE_ARG up -d --force-recreate
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -70,7 +85,7 @@ SERVICE_EOF
 
     sed -i "s|SERVICE_DESC|$DESCRIPTION|" /tmp/miao-k1.service
     sed -i "s|SERVICE_DIR|$SCRIPT_DIR|" /tmp/miao-k1.service
-    sed -i "s|SERVICE_DOCKER|$COMPOSE_CMD|" /tmp/miao-k1.service
+    sed -i "s|SERVICE_COMPOSE_CMD|$COMPOSE_CMD|" /tmp/miao-k1.service
     sed -i "s|SERVICE_COMPOSE|$COMPOSE_FILE|" /tmp/miao-k1.service
     sed -i "s|PROFILE_ARG|$PROFILE_ARG|" /tmp/miao-k1.service
 
@@ -99,8 +114,8 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=SERVICE_DIR
 ExecStartPre=/bin/sleep 5
-ExecStart=SERVICE_DOCKER compose -f SERVICE_COMPOSE PROFILE_ARG up -d
-ExecStop=SERVICE_DOCKER compose -f SERVICE_COMPOSE PROFILE_ARG down
+ExecStart=SERVICE_COMPOSE_CMD -f SERVICE_COMPOSE PROFILE_ARG up -d
+ExecStop=SERVICE_COMPOSE_CMD -f SERVICE_COMPOSE PROFILE_ARG down
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -112,7 +127,7 @@ SERVICE_EOF
 
     sed -i "s|SERVICE_DESC|$DESCRIPTION|" /tmp/miao-tts.service
     sed -i "s|SERVICE_DIR|$SCRIPT_DIR|" /tmp/miao-tts.service
-    sed -i "s|SERVICE_DOCKER|$COMPOSE_CMD|" /tmp/miao-tts.service
+    sed -i "s|SERVICE_COMPOSE_CMD|$COMPOSE_CMD|" /tmp/miao-tts.service
     sed -i "s|SERVICE_COMPOSE|$COMPOSE_FILE|" /tmp/miao-tts.service
     sed -i "s|PROFILE_ARG|$PROFILE_ARG|" /tmp/miao-tts.service
 
