@@ -100,6 +100,27 @@ _en_stub.distribute_phone = _distribute_phone
 _sys.modules["melo.text.english"] = _en_stub
 logger.info("English text module stubbed (Chinese TTS does not need NLTK/cmudict)")
 
+# 打桩韩文/法文模块 — 阻止 HuggingFace BERT 下载超时
+_kr_stub = _types.ModuleType("melo.text.korean")
+_kr_stub.text_normalize = lambda t: t
+_kr_stub.g2p = lambda t: ([], [], [])
+_kr_stub.get_bert_feature = lambda *a, **k: None
+_kr_stub.distribute_phone = _distribute_phone
+_sys.modules["melo.text.korean"] = _kr_stub
+logger.info("Korean text module stubbed")
+
+_fr_stub = _types.ModuleType("melo.text.french")
+_fr_stub.text_normalize = lambda t: t
+_fr_stub.g2p = lambda t: ([], [], [])
+_fr_stub.get_bert_feature = lambda *a, **k: None
+_fr_stub.distribute_phone = _distribute_phone
+_sys.modules["melo.text.french"] = _fr_stub
+logger.info("French text module stubbed")
+
+# 强制离线防止 MeloTTS init 时触发 HuggingFace 下载
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 
 def _detect_device() -> str:
     """自动检测最优推理设备：CUDA > MPS > CPU"""
