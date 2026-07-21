@@ -4,3 +4,13 @@ MeloTTS/
 # OS
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Test outputs
+photos_output/
+test_yolo_models.py
