@@ -117,9 +117,9 @@ _fr_stub.distribute_phone = _distribute_phone
 _sys.modules["melo.text.french"] = _fr_stub
 logger.info("French text module stubbed")
 
-# 强制离线防止 MeloTTS init 时触发 HuggingFace 下载
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+# 使用 HuggingFace 国内镜像（hf-mirror.com），避免 huggingface.co 连接超时
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+# 离线模式在模型首次加载后启用（首次需下载 BERT，后续用缓存）
 
 
 def _detect_device() -> str:
@@ -401,7 +401,11 @@ class MeloTTS:
         logger.info(f"MeloTTS init: lang={TTS_LANGUAGE} speaker={TTS_SPEAKER} speed={TTS_SPEED} device={self._device}")
 
     def _load_model(self):
-        """惰性加载 MeloTTS 模型（首次推理触发，含自动下载）"""
+        """惰性加载 MeloTTS 模型（首次推理触发，含自动下载）。
+
+        首次加载允许 HuggingFace 在线下载 bert-base-multilingual-uncased，
+        加载完成后立即启用离线模式，后续重启直接使用缓存。
+        """
         if self._model is not None:
             return
         logger.info(f"Loading MeloTTS model (lang={TTS_LANGUAGE}, device={self._device})...")
@@ -412,6 +416,10 @@ class MeloTTS:
         except Exception:
             n_speakers = '?'
         logger.info(f"MeloTTS model loaded (device={self._device}, speakers={n_speakers})")
+        # 模型加载完毕 → 后续启动可直接离线使用缓存
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        logger.info("HuggingFace offline mode enabled (model cached)")
 
     async def synthesize(self, text: str) -> str:
         """异步合成入口 — 分句合成 + 静音重试，隔离故障。
