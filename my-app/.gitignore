@@ -18,12 +18,20 @@ Thumbs.db
 !.env.example
 !.env.test
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Model files (user uploads their own)
 *.onnx
 *.pt
 *.pth
 *.bin
 *.safetensors
+
+# YOLO test artifacts (my-app 内部)
+server/__pycache__/
+server/test_output/
 
 # Vite
 vite.config.js.timestamp-*
