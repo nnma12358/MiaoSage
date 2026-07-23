@@ -2,7 +2,7 @@
 
 <p align="center">
   <em>苗族服饰文化智能识别与交互系统</em><br>
-  <sub>进迭时空 SpacemiT K1 (RISC-V) · 前后端一体化 · 双模式部署 · 四引擎 AI</sub>
+  <sub>进迭时空 SpacemiT K1 (RISC-V) · 前后端一体化 · 三模式部署 · 四引擎 AI</sub>
 </p>
 
 <p align="center">
@@ -12,6 +12,25 @@
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/frontend-SvelteKit-FF3E00?style=for-the-badge&logo=svelte" alt="SvelteKit"></a>
   <a href="https://github.com/nnma12358/MiaoSage"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License"></a>
 </p>
+
+---
+
+## 📂 分支导航
+
+> 根据部署场景选择对应分支：
+
+| 分支 | 部署模式 | 目标平台 | 适用场景 |
+|------|---------|---------|---------|
+| **[main](https://github.com/nnma12358/MiaoSage/tree/main)** | 🏠 纯本地 · K1 | riscv64 | K1 开发板单机全功能 |
+| **[x86](https://github.com/nnma12358/MiaoSage/tree/x86)** | ⚡ 边缘 AI · x86 | x86_64 | PC/服务器轻量化部署 |
+| **[swarm](https://github.com/nnma12358/MiaoSage/tree/swarm)** | 🌐 分布式 Swarm | K1 + PC | K1 推理 + PC TTS 内存卸载 |
+
+```bash
+git clone git@github.com:nnma12358/MiaoSage.git
+cd MiaoSage
+git checkout x86    # PC 边缘部署
+git checkout swarm  # K1+PC 分布式部署
+```
 
 ---
 
@@ -39,7 +58,7 @@
 | 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF Q4_K_M 量化 · Modelfile 端侧部署 |
 | 🔍 **模型自动发现** | Ollama API | 懒加载 + 60s 缓存 · 关键字匹配 (miao/qwen/...) · 环境变量灵活覆盖 |
 
-> 💡 **双模式部署**：Docker 多容器（8GB 内存）或单进程静态部署（2GB 即可），灵活适配不同硬件条件
+> 💡 **三模式部署**：K1 纯本地 · x86 边缘 AI · Swarm 分布式，灵活适配不同硬件条件
 
 ---
 
@@ -275,8 +294,9 @@ curl -k -X POST https://127.0.0.1:443/ollama/refresh
 | 📌 | 链接 |
 |:--:|------|
 | 📖 | [应用详细文档](my-app/README.md) |
-| 🐳 | [Docker 部署脚本](my-app/deploy/deploy-k1-docker-only.sh) |
-| 🧠 | [Ollama 模型部署指南](LLM/train-qwen2.5%200.5b/models/README_OLLAMA.md) |
+| 🏠 | [main 分支 — K1 纯本地](https://github.com/nnma12358/MiaoSage/tree/main) |
+| ⚡ | [x86 分支 — 边缘 AI](https://github.com/nnma12358/MiaoSage/tree/x86) |
+| 🌐 | [swarm 分支 — 分布式部署](https://github.com/nnma12358/MiaoSage/tree/swarm) |
 | 📦 | [GitHub 仓库](https://github.com/nnma12358/MiaoSage) |
 
 ---
