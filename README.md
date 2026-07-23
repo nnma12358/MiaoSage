@@ -8,11 +8,29 @@
 <p align="center">
   <a href="https://www.spacemit.com/"><img src="https://img.shields.io/badge/platform-riscv64-ff69b4?style=for-the-badge&logo=riscv" alt="Platform"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.12-blue?style=for-the-badge&logo=python" alt="Python"></a>
-  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-5_containers-2496ED?style=for-the-badge&logo=docker" alt="Docker"></a>
-  <a href="https://github.com/nnma12358/MiaoSage/tree/swarm"><img src="https://img.shields.io/badge/swarm-K1%2BPC-orange?style=for-the-badge&logo=swarm" alt="Swarm"></a>
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-4_containers-2496ED?style=for-the-badge&logo=docker" alt="Docker"></a>
   <a href="https://svelte.dev/"><img src="https://img.shields.io/badge/frontend-SvelteKit-FF3E00?style=for-the-badge&logo=svelte" alt="SvelteKit"></a>
   <a href="https://github.com/nnma12358/MiaoSage"><img src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" alt="License"></a>
 </p>
+
+---
+
+## 📂 分支导航
+
+> 根据部署场景选择对应分支：
+
+| 分支 | 部署模式 | 目标平台 | 适用场景 |
+|------|---------|---------|---------|
+| **[main](https://github.com/nnma12358/MiaoSage/tree/main)** | 🏠 纯本地 · K1 | riscv64 | K1 开发板单机全功能 |
+| **[x86](https://github.com/nnma12358/MiaoSage/tree/x86)** | ⚡ 边缘 AI · x86 | x86_64 | PC/服务器轻量化部署 (当前) |
+| **[swarm](https://github.com/nnma12358/MiaoSage/tree/swarm)** | 🌐 分布式 Swarm | K1 + PC | K1 推理 + PC TTS 内存卸载 |
+
+```bash
+git clone git@github.com:nnma12358/MiaoSage.git
+cd MiaoSage
+git checkout x86    # PC 边缘部署
+git checkout swarm  # K1+PC 分布式部署
+```
 
 ---
 
@@ -398,10 +416,10 @@ curl -k -X POST https://127.0.0.1:443/ollama/refresh
 | 📌 | 链接 |
 |:--:|------|
 | 📖 | [应用详细文档](my-app/README.md) |
-| � | [Swarm 分布式编排](my-app/docker-compose.swarm.yml) |
-| 🐳 | [Docker 部署脚本](my-app/deploy/deploy-k1-docker-only.sh) |
+| 🏠 | [main 分支 — K1 纯本地](https://github.com/nnma12358/MiaoSage/tree/main) |
+| ⚡ | [x86 分支 — 边缘 AI](https://github.com/nnma12358/MiaoSage/tree/x86) |
+| 🌐 | [swarm 分支 — 分布式部署](https://github.com/nnma12358/MiaoSage/tree/swarm) |
 | 📦 | [GitHub 仓库](https://github.com/nnma12358/MiaoSage) |
-| 🌿 | [Swarm 分支](https://github.com/nnma12358/MiaoSage/tree/swarm) |
 
 ---
 
