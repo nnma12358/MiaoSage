@@ -15,9 +15,9 @@
 
 | 分支 | 部署模式 | 目标平台 | 适用场景 |
 |------|---------|---------|---------|
-| **[main](https://github.com/../tree/main)** | 🏠 纯本地 · K1 | riscv64 (SpacemiT K1) | K1 开发板单机全功能部署 |
-| **[x86](https://github.com/../tree/x86)** | 🖥️ 纯本地 · x86 | x86_64 (Linux/Windows) | PC/服务器单机全功能部署 |
-| **[swarm](https://github.com/../tree/swarm)** | 🌐 分布式 Swarm | K1 + PC 混合 | K1 推理 + PC TTS，内存卸载 |
+| **[main](https://github.com/nnma12358/MiaoSage/tree/main)** | 🏠 纯本地 · K1 | riscv64 (SpacemiT K1) | K1 开发板单机全功能部署 |
+| **[x86](https://github.com/nnma12358/MiaoSage/tree/x86)** | 🖥️ 纯本地 · x86 | x86_64 (Linux/Windows) | PC/服务器单机全功能部署 |
+| **[swarm](https://github.com/nnma12358/MiaoSage/tree/swarm)** | 🌐 分布式 Swarm | K1 + PC 混合 | K1 推理 + PC TTS，内存卸载 |
 
 > 💡 **当前分支 (main)**: K1 纯本地部署。切换分支: `git checkout x86` 或 `git checkout swarm`
 
