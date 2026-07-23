@@ -1,0 +1,30 @@
+# ============================================================
+# 苗绣·识裳 — YOLO 检测（x86_64 边缘优化）
+# ============================================================
+# 标准 ONNX Runtime，CPU 推理优化，~500MB 内存
+# ============================================================
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libopenblas0 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 边缘优化: 固定 ONNX 线程数，避免 CPU 争抢
+RUN pip install --no-cache-dir \
+    onnxruntime numpy Pillow \
+    fastapi uvicorn python-multipart \
+    && rm -rf /root/.cache/pip/*
+
+COPY Sliver.onnx Clothes.onnx /app/
+COPY server/yolo_server.py /app/
+
+ENV OMP_NUM_THREADS=2
+ENV OPENBLAS_NUM_THREADS=2
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+CMD ["python3", "yolo_server.py"]

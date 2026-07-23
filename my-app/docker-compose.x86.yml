@@ -1,0 +1,127 @@
+# ============================================================
+# 苗绣·识裳 — x86_64 边缘 AI 部署编排
+# ============================================================
+# 定位: AI 边缘开发，所有服务单机本地运行，低资源占用
+#
+# 内存预算（边缘优化，8GB 总量）:
+#   YOLO ~800M | ASR(whisper-tiny) ~400M | TTS(edge-tts) ~150M | Gateway ~200M
+#   容器总计 ~1.6G，留 ~6G+ 给 OS + Ollama
+#
+# 启动:
+#   docker compose -f docker-compose.x86.yml up -d --build
+# ============================================================
+
+services:
+  # ========================
+  # 👁️ YOLO 双模型检测（ONNX Runtime · 边缘优化）
+  # ========================
+  yolo:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86-yolo
+    image: miao-sage:x86-edge-yolo
+    container_name: miao-yolo
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+      - OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-2}
+    volumes:
+      - edge-cache:/root/.cache
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 1024M }
+        reservations: { cpus: '0.5', memory: 128M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+
+  # ========================
+  # 👂 ASR 语音识别（faster-whisper tiny · 边缘优化）
+  # ========================
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86-asr
+    image: miao-sage:x86-edge-asr
+    container_name: miao-asr
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+    volumes:
+      - edge-cache:/root/.cache
+    deploy:
+      resources:
+        limits: { cpus: '2.0', memory: 768M }
+        reservations: { cpus: '0.3', memory: 128M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+
+  # ========================
+  # 🔊 TTS 语音合成（edge-tts · 边缘优化）
+  # ========================
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86-tts
+    image: miao-sage:x86-edge-tts
+    container_name: miao-tts
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TTS_VOICE=${TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+      - TTS_RATE=${TTS_RATE:-+0%}
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 256M }
+        reservations: { cpus: '0.2', memory: 64M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+
+  # ========================
+  # 🚪 API 网关（边缘优化）
+  # ========================
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.x86-gateway
+    image: miao-sage:x86-edge-gateway
+    container_name: miao-gateway
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    depends_on:
+      - yolo
+      - asr
+      - tts
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-}
+      - OLLAMA_MODEL_KEYWORDS=${OLLAMA_MODEL_KEYWORDS:-miao,qwen}
+      - YOLO_URL=http://127.0.0.1:8000
+      - ASR_URL=http://127.0.0.1:8001
+      - TTS_URL=http://127.0.0.1:8002
+    volumes:
+      - edge-cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://127.0.0.1:443/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    deploy:
+      resources:
+        limits: { cpus: '1.0', memory: 256M }
+        reservations: { cpus: '0.2', memory: 64M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "2" }
+
+volumes:
+  edge-cache:
+    name: miao-edge-cache

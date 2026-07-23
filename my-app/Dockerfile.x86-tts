@@ -1,0 +1,31 @@
+# ============================================================
+# 苗绣·识裳 — TTS 语音合成（x86_64 边缘优化）
+# ============================================================
+# edge-tts: 纯 Python，调用微软免费 TTS API，~100MB 内存
+# 对比 MeloTTS (~2GB)，释放内存给 YOLO + LLM
+# 离线备选: MeloTTS（见 Dockerfile.x86-tts-melo）
+# ============================================================
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 纯 Python 包，无 C 编译，无架构依赖
+RUN pip install --no-cache-dir \
+    edge-tts \
+    fastapi uvicorn python-multipart \
+    && rm -rf /root/.cache/pip/*
+
+COPY server/tts_edge_server.py /app/
+
+ENV TTS_VOICE=zh-CN-XiaoxiaoNeural
+ENV TTS_RATE=+0%
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8002/health || exit 1
+
+EXPOSE 8002
+CMD ["python3", "tts_edge_server.py"]

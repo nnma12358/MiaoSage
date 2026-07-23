@@ -1,140 +1,144 @@
-# 苗绣·识裳 (MiaoSage)
+﻿# 苗绣·识裳 (MiaoSage) — x86_64 边缘 AI
 
-> 苗族服饰文化智能识别与交互系统 — 基于 SpacemiT K1 (riscv64) 开发板
+> 苗族服饰文化智能识别与交互系统 — x86_64 边缘 AI 轻量化部署
 
-[![Platform](https://img.shields.io/badge/platform-riscv64-ff69b4)](https://www.spacemit.com/)
-[![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-x86__64-0078D4)](https://www.amd.com/)
+[![Python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/docker-4%20containers-2496ED)](https://www.docker.com/)
+[![Edge AI](https://img.shields.io/badge/edge--ai-optimized-4cd9b2)]()
 
 ---
 
+## 📂 分支导航
+
+| 分支 | 部署模式 | 目标平台 |
+|------|---------|---------|
+| **[main](https://github.com/nnma12358/MiaoSage/tree/main)** | K1 纯本地 | riscv64 |
+| **[x86](https://github.com/nnma12358/MiaoSage/tree/x86)** | ⚡ 边缘 AI | x86_64 (当前) |
+| **[swarm](https://github.com/nnma12358/MiaoSage/tree/swarm)** | 分布式 | K1 + PC |
+
+---
+
+## 🎯 边缘 AI 定位
+
+面向 **AI 边缘开发**场景，极致轻量化：
+
+| 指标 | 传统部署 | 边缘优化 | 节省 |
+|------|---------|---------|:--:|
+| TTS 内存 | MeloTTS ~2GB | edge-tts ~100MB | **95%** |
+| ASR 模型 | Whisper-small ~500MB | Whisper-tiny ~75MB | **85%** |
+| 容器总内存 | ~5.5GB | ~1.6GB | **71%** |
+
 ## 功能
 
-| 功能 | 说明 |
-|------|------|
-| 🔍 **双模型目标检测** | ONNX Runtime 推理，银饰 8 类 + 服装 2 类 · 三模式 Pipeline |
-| 🎤 **ASR 语音识别** | SenseVoice 中文语音转文字 |
-| 🔊 **TTS 语音合成** | spacemit_tts 文字转语音 |
-| 💬 **LLM 智能对话** | Ollama (qwen2.5-instruct) 苗族文化知识问答 |
-| 📊 **性能监控** | CPU/内存/温度/延迟百分位实时监控 |
+| 功能 | 边缘实现 | 内存 |
+|------|---------|:--:|
+| 🔍 目标检测 | ONNX Runtime · 银饰6+服装10类 | ~800M |
+| 🎤 语音识别 | faster-whisper tiny · int8 量化 | ~400M |
+| 🔊 语音合成 | edge-tts 微软神经网络 | ~150M |
+| 💬 智能对话 | Ollama qwen2.5-instruct · 幻觉过滤 | ~3G (宿主机) |
+| 📊 性能监控 | CPU/内存/延迟百分位 | ~50M |
 
 ## 架构
 
 ```
-浏览器 HTTPS :443 → Gateway (SPA + API 路由)
-                      ├── /detect  → YOLO 双模型  :8000
-                      │     ?mode=silver|clothes|pipeline
-                      ├── /asr     → ASR   :8001
-                      ├── /tts     → TTS   :8002
-                      └── /chat    → Ollama :11434 (宿主机)
-```
-
-## 目录结构
-
-```
-server/                     # Python 服务端
-├── board_server.py          # 静态部署一体化服务器
-├── gateway_server.py        # Docker API 网关
-├── yolo_server.py           # YOLO 微服务
-├── asr_server.py            # ASR 微服务
-├── tts_server.py            # TTS 微服务
-├── perf.py                  # 性能监控模块
-└── requirements.txt         # 静态部署 pip 依赖
-deploy/                     # 部署脚本
-├── deploy-k1-docker-only.sh # Docker 专用部署
-├── deploy-k1-docker.sh      # 双模式部署 (static|docker)
-└── pack-send.sh             # 打包发送
-src/                        # Svelte 前端源码
-build/                      # 前端构建产物
-Dockerfile.{yolo,asr,tts,k1} # 四容器 Dockerfile
-docker-compose.k1.yml       # 多容器编排
+x86_64 边缘 AI 主机
+├── Gateway :443   → SPA + 路由 + 幻觉过滤 (~200M)
+├── YOLO :8000     → ONNX Runtime · 2 threads (~800M)
+├── ASR :8001      → faster-whisper tiny · int8 (~400M)
+├── TTS :8002      → edge-tts · 微软 TTS API (~150M)
+└── Ollama :11434  → qwen2.5-instruct (宿主机 ~3G)
 ```
 
 ## 快速开始
 
 ### 环境要求
 
-- **K1 板**: SpacemiT Muse Pi Pro (riscv64), Ubuntu 24.04, 8GB+ 内存
-- **宿主机**: Ollama + qwen2.5-instruct 模型
-- **NLP 模块**: `/home/bainbu/spacemit-demo/examples/NLP`
-- **PC**: Node.js 18+ (仅构建前端)
-
-### Docker 多容器部署（推荐）
+- **系统**: Linux (Ubuntu 22.04+) / Windows WSL2 / macOS
+- **CPU**: 4 核+, 8GB+ 内存（推荐 16GB）
+- **Docker**: 24.0+
+- **Ollama**: 宿主机安装
 
 ```bash
-# PC 端一键部署
-bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
-
-# 或 K1 手动（本地全功能模式）：
-cd /home/bainbu/miao-xiu-k1-d
-cp /home/bainbu/miao-xiu-k1/best_fp16.onnx .       # 银饰模型
-cp /home/bainbu/miao-xiu-k1/clothesfp16.onnx .   # 服装模型
-docker compose --profile standalone up -d --build
+# 安装 Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5-instruct
 ```
 
-访问 `https://<K1_IP>:443`（自签名证书，浏览器点"高级→继续"）。
-
-### Swarm 分布式部署
+### 部署
 
 ```bash
-# K1 端（TTS 卸载到 PC，释放 ~1.5GB 内存）
-TTS_HOST=192.168.1.100 docker compose up -d --build
+git clone https://github.com/nnma12358/MiaoSage.git
+cd MiaoSage/my-app && git checkout x86
 
-# PC 端（仅 TTS 服务）
-docker compose --profile swarm-pc up -d --build
+# 构建前端
+npm install && npm run build
 
-# 切换回本地模式
-docker compose down
-docker compose --profile standalone up -d
+# 放置 ONNX 模型文件
+cp /path/to/Sliver.onnx .
+cp /path/to/Clothes.onnx .
+
+# 启动全部边缘服务
+docker compose -f docker-compose.x86.yml up -d --build
 ```
 
-> 💡 **切换原理**：`TTS_HOST` 环境变量控制 TTS 路由。不设 = 本地 TTS，设 PC_IP = 远程 TTS。
+访问 `https://localhost:443`（自签名证书 → 高级 → 继续访问）。
+
+### 按需启动（省内存）
+
+```bash
+# 最小化：仅检测 + 对话 (~1G 容器)
+docker compose -f docker-compose.x86.yml up -d yolo gateway
+
+# 语音全功能
+docker compose -f docker-compose.x86.yml up -d asr tts gateway
+
+# GPU 加速 ASR（需 nvidia-container-toolkit）
+WHISPER_DEVICE=cuda WHISPER_COMPUTE_TYPE=float16 \
+  docker compose -f docker-compose.x86.yml up -d asr
+```
 
 ### 容器管理
 
 ```bash
-docker compose ps          # 查看状态
-docker compose logs -f      # 全部日志
-docker compose logs yolo    # 单容器日志
-docker compose restart      # 重启全部
-docker compose down         # 停止
-```
-
-### 按需启动
-
-```bash
-# 仅目标检测 + 对话
-docker compose up -d yolo gateway
-
-# 仅语音功能（需 PC TTS）
-TTS_HOST=192.168.1.100 docker compose up -d asr gateway
+docker compose -f docker-compose.x86.yml ps
+docker compose -f docker-compose.x86.yml logs -f yolo
+docker compose -f docker-compose.x86.yml restart
+docker compose -f docker-compose.x86.yml down
 ```
 
 ## API
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/` | GET | 前端 SPA |
-| `/detect` | POST | 上传图片 → 苗族服饰/银饰检测 (支持 ?mode=silver\|clothes\|pipeline) |
+| `/detect` | POST | 上传图片 → 检测 (`?mode=silver\|clothes\|pipeline`) |
 | `/asr` | POST | 上传音频 → 文字 |
-| `/tts` | POST | `{"text":"..."}` → WAV 音频 |
+| `/tts` | POST | `{"text":"..."}` → MP3 音频 |
 | `/chat` | POST | LLM 对话 |
 | `/chat/stream` | POST | LLM 流式对话 (SSE) |
 | `/health` | GET | 全服务健康检查 |
-| `/stats` | GET | CPU/内存/温度/延迟百分位 |
+| `/stats` | GET | CPU/内存/延迟百分位 |
+
+## 边缘优化详解
+
+| 组件 | 选择 | 替代方案 | 权衡 |
+|------|------|---------|------|
+| **TTS** | edge-tts (~100M) | MeloTTS (~2G) | 需联网，音质最佳 |
+| **ASR** | whisper-tiny (~75M) | whisper-small (~500M) | 识别率略低，延迟更低 |
+| **YOLO** | ONNX 2线程 | ONNX 4线程 | 避免 CPU 与 ASR/LLM 争抢 |
+| **网关** | 1 uvicorn worker | 多 worker | 边缘单用户足够 |
 
 ## 技术栈
 
-| 组件 | 技术 |
-|------|------|
-| 前端 | SvelteKit |
-| 后端 | FastAPI + Uvicorn |
-| 目标检测 | YOLOv8n 双模型 ONNX — 银饰 8 类 + 服装 2 类 (spacemit-ort) |
-| 语音识别 | SenseVoice (spacemit_asr) |
-| 语音合成 | MeloTTS (spacemit_tts) |
-| 大语言模型 | Ollama + Qwen2.5-Instruct |
-| 容器化 | Docker Compose (4 容器 host 网络) |
-| 目标平台 | riscv64 (SpacemiT K1) |
+| 组件 | 技术 | 定位 |
+|------|------|------|
+| 前端 | SvelteKit | 轻量响应式 |
+| 后端 | FastAPI + Uvicorn | 异步高性能 |
+| 目标检测 | YOLOv8n ONNX (onnxruntime) | CPU 推理 |
+| 语音识别 | faster-whisper tiny (CTranslate2) | 边缘量化 |
+| 语音合成 | edge-tts (微软神经网络) | 云端 TTS |
+| 大语言模型 | Ollama + Qwen2.5-Instruct | 本地推理 |
+| 容器化 | Docker Compose (host 网络) | 零开销网络 |
 
 ## 许可证
 

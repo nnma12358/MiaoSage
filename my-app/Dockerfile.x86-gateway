@@ -1,0 +1,41 @@
+# ============================================================
+# 苗绣·识裳 — API 网关（x86_64 边缘优化）
+# ============================================================
+# FastAPI + Uvicorn，纯 Python，~200MB 内存
+# 路由: /detect → YOLO / /asr → ASR / /tts → TTS / /chat → Ollama
+# ============================================================
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    fastapi uvicorn requests python-multipart \
+    && rm -rf /root/.cache/pip/*
+
+COPY build/ /app/build/
+COPY server/gateway_server.py server/perf.py server/hallucination_filter.py /app/
+
+RUN mkdir -p /app/certs && \
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /app/certs/key.pem \
+        -out /app/certs/cert.pem \
+        -subj "/CN=MiaoSage-x86-Edge"
+
+ENV OLLAMA_HOST=http://127.0.0.1:11434
+ENV YOLO_URL=http://127.0.0.1:8000
+ENV ASR_URL=http://127.0.0.1:8001
+ENV TTS_URL=http://127.0.0.1:8002
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -fksS https://localhost:443/health || exit 1
+
+EXPOSE 443
+CMD python3 -m uvicorn gateway_server:app \
+    --host 0.0.0.0 --port 443 \
+    --ssl-keyfile /app/certs/key.pem \
+    --ssl-certfile /app/certs/cert.pem \
+    --workers 1 --log-level info

@@ -1,0 +1,31 @@
+# ============================================================
+# 苗绣·识裳 — ASR 语音识别（x86_64 边缘优化）
+# ============================================================
+# faster-whisper + CTranslate2，tiny 模型 ~150MB 内存
+# 边缘场景优先低延迟，beam_size=3
+# ============================================================
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    faster-whisper \
+    fastapi uvicorn python-multipart \
+    && rm -rf /root/.cache/pip/*
+
+COPY server/asr_server_x86.py /app/
+
+# 边缘优化: tiny 模型 (~75MB), int8 量化, beam_size=3 降延迟
+ENV WHISPER_MODEL=tiny
+ENV WHISPER_DEVICE=cpu
+ENV WHISPER_COMPUTE_TYPE=int8
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+EXPOSE 8001
+CMD ["python3", "asr_server_x86.py"]
