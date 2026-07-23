@@ -71,18 +71,36 @@ ollama pull qwen2.5-instruct
 git clone https://github.com/nnma12358/MiaoSage.git
 cd MiaoSage/my-app && git checkout x86
 
-# 构建前端
+# 一键部署（推荐）
+bash deploy-x86.sh
+
+# 或手动逐步执行：
 npm install && npm run build
-
-# 放置 ONNX 模型文件
-cp /path/to/Sliver.onnx .
-cp /path/to/Clothes.onnx .
-
-# 启动全部边缘服务
+cp /path/to/Sliver.onnx . && cp /path/to/Clothes.onnx .
 docker compose -f docker-compose.x86.yml up -d --build
 ```
 
 访问 `https://localhost:443`（自签名证书 → 高级 → 继续访问）。
+
+> 💡 `bash deploy-x86.sh --minimal` 仅启动 YOLO+Gateway (~1GB)
+
+### 目录结构
+
+```
+my-app/
+├── deploy-x86.sh                # 一键部署脚本
+├── docker-compose.x86.yml       # 边缘 AI 编排
+├── Dockerfile.x86-{yolo,asr,tts,gateway}
+├── server/
+│   ├── yolo_server.py           # YOLO 双模型 (共享)
+│   ├── gateway_server.py        # API 网关 (共享)
+│   ├── hallucination_filter.py  # LLM 幻觉过滤 (共享)
+│   ├── perf.py                  # 性能监控 (共享)
+│   ├── asr_server_x86.py        # faster-whisper tiny
+│   └── tts_edge_server.py       # edge-tts
+├── src/                         # Svelte 前端源码
+└── build/                       # 前端构建产物
+```
 
 ### 按需启动（省内存）
 
