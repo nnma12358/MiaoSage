@@ -16,24 +16,30 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("yolo-server")
 
 # ---------- 模型路径 ----------
-CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "/app/clothesfp16.onnx")
-SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "/app/best_fp16.onnx")
+CLOTHES_MODEL = os.environ.get("CLOTHES_MODEL", "/app/Clothes.onnx")
+SILVER_MODEL  = os.environ.get("SILVER_MODEL",  "/app/Sliver.onnx")
 
 # ---------- 类别映射 ----------
 _MIAO_SILVER_CLASSES = {
-    0: "流苏帽 (tassel_hat)",
-    1: "苗族牛角银头饰 (miao_ox_horn_silver_headwear)",
-    2: "苗族银发簪 (miao_silver_hairpin)",
-    3: "苗族银冠 (miao_silver_crown)",
-    4: "苗族银胸饰 (miao_silver_chest_ornament)",
-    5: "苗族银锁 (miao_silver_lock)",
-    6: "苗族银项链 (miao_silver_necklace)",
-    7: "银头饰 (silver_headdress)",
+    0: "全包式银花帽",
+    1: "平顶花丝银头冠",
+    2: "立柱花丝银头冠",
+    3: "银压领",
+    4: "雕花弯形银牛角冠",
+    5: "黑苗银锁",
 }
 
 _MIAO_CLOTHES_CLASSES = {
-    0: "苗族便装 (Miao casual wear)",
-    1: "苗族盛装 (Miao ceremonial dress)",
+    0: "几何挑花麻质上衣",
+    1: "刺绣围腰",
+    2: "单边彩绣百褶裙",
+    3: "多层条纹布包头",
+    4: "小型浮雕银胸吊牌",
+    5: "彩绣直筒绣花长裙",
+    6: "白色头帕",
+    7: "米白麻质短上衣",
+    8: "袖口破线绣纹样",
+    9: "彩色十字挑花包头头巾",
 }
 
 
@@ -238,6 +244,37 @@ def health():
     }
 
 
+def _normalize_response(pipeline_result: dict) -> dict:
+    """将 Pipeline 检测结果转换为前端期望的扁平格式
+
+    前端期望: { detections: [{ class, confidence, bbox: [x, y, w, h] }] }
+    服务返回: { clothes: [...], silver: [...], silver_filtered: [...] }
+    其中 bbox 为 { x1, y1, x2, y2 } 字典
+    """
+    detections = []
+
+    # 服装检测结果
+    for d in pipeline_result.get("clothes", []):
+        b = d["bbox"]
+        detections.append({
+            "class": d["class"],
+            "confidence": d["confidence"],
+            "bbox": [b["x1"], b["y1"], b["x2"] - b["x1"], b["y2"] - b["y1"]],
+        })
+
+    # 银饰检测结果（优先使用 filtered，无人物框时用原始）
+    silver_dets = pipeline_result.get("silver_filtered") or pipeline_result.get("silver", [])
+    for d in silver_dets:
+        b = d["bbox"]
+        detections.append({
+            "class": d["class"],
+            "confidence": d["confidence"],
+            "bbox": [b["x1"], b["y1"], b["x2"] - b["x1"], b["y2"] - b["y1"]],
+        })
+
+    return {"detections": detections}
+
+
 @app.post("/detect")
 async def detect(
     image: UploadFile = File(...),
@@ -254,7 +291,13 @@ async def detect(
 
     result = detector.detect(img, mode=mode, use_person_filter=person_filter)
     result["success"] = True
-    return result
+
+    # 转换为前端兼容格式
+    normalized = _normalize_response(result)
+    normalized["success"] = True
+    normalized["mode"] = result["mode"]
+    normalized["cost_ms"] = result.get("cost_ms", {})
+    return normalized
 
 
 if __name__ == "__main__":

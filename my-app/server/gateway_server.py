@@ -115,6 +115,9 @@ _ARCH = os.uname().machine
 # 如需覆盖，设置环境变量 OLLAMA_SYSTEM_PROMPT
 _SYSTEM_PROMPT = os.environ.get("OLLAMA_SYSTEM_PROMPT", None)
 
+# ---- 幻觉过滤器 ----
+from hallucination_filter import filter_response, filter_stream_chunks
+
 # ---- 性能监控（复用 perf.py 模块）----
 from perf import monitor, LatencyTracker, ConcurrencyGuard
 
@@ -143,7 +146,7 @@ def _proxy_post(url: str, files: dict = None, json_data: dict = None, stream: bo
         raise HTTPException(504, f"后端服务超时: {url}")
 
 # ============================================================
-app = FastAPI(title="苗绣·识裳 K1 网关", version="5.0.0", docs_url=None, redoc_url=None)
+app = FastAPI(title="苗绣·识裳 网关", version="6.0.0", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -181,6 +184,7 @@ async def health():
     return {
         "status": "ok",
         "platform": _ARCH,
+        "mode": "local",
         "services": svc,
         "ollama": "✓" if ollama_ok else "✗",
         "memory_mb": monitor.memory_used_mb(),
