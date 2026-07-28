@@ -14,3 +14,7 @@ venv/
 # Test outputs
 photos_output/
 test_yolo_models.py
+photos
+
+#MeloTTS
+MeloTTS

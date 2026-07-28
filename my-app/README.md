@@ -4,7 +4,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-riscv64-ff69b4)](https://www.spacemit.com/)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
-[![Docker](https://img.shields.io/badge/docker-4%20containers-2496ED)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/docker-5%20containers-2496ED)](https://www.docker.com/)
 
 ---
 
@@ -14,7 +14,7 @@
 |------|------|
 | 🔍 **双模型目标检测** | ONNX Runtime 推理，银饰 8 类 + 服装 2 类 · 三模式 Pipeline |
 | 🎤 **ASR 语音识别** | SenseVoice 中文语音转文字 |
-| 🔊 **TTS 语音合成** | spacemit_tts 文字转语音 |
+| 🔊 **TTS 语音合成** | edge-tts（默认）/ MeloTTS（离线） 文字转语音 |
 | 💬 **LLM 智能对话** | Ollama (qwen2.5-instruct) 苗族文化知识问答 |
 | 📊 **性能监控** | CPU/内存/温度/延迟百分位实时监控 |
 
@@ -46,8 +46,9 @@ deploy/                     # 部署脚本
 └── pack-send.sh             # 打包发送
 src/                        # Svelte 前端源码
 build/                      # 前端构建产物
-Dockerfile.{yolo,asr,tts,k1} # 四容器 Dockerfile
-docker-compose.k1.yml       # 多容器编排
+Dockerfile.{yolo,asr,tts,tts-edge,k1} # 五容器 Dockerfile
+docker-compose.k1.yml       # K1 多容器编排
+docker-compose.swarm.yml    # Swarm 分布式编排
 ```
 
 ## 快速开始
@@ -59,7 +60,10 @@ docker-compose.k1.yml       # 多容器编排
 - **NLP 模块**: `/home/bainbu/spacemit-demo/examples/NLP`
 - **PC**: Node.js 18+ (仅构建前端)
 
-### Docker 多容器部署（推荐）
+### Docker 多容器部署（推荐 · K1 默认 edge-tts）
+
+> K1 默认使用 edge-tts（微软免费 API，~100MB 内存，需联网）。
+> 离线环境可切换 MeloTTS：`docker compose -f docker-compose.k1.yml --profile offline up -d tts`
 
 ```bash
 # PC 端一键部署
@@ -69,7 +73,7 @@ bash deploy/deploy-k1-docker-only.sh root@192.168.x.x
 cd /home/bainbu/miao-xiu-k1-d
 cp /home/bainbu/miao-xiu-k1/best_fp16.onnx .       # 银饰模型
 cp /home/bainbu/miao-xiu-k1/clothesfp16.onnx .   # 服装模型
-docker compose --profile standalone up -d --build
+docker compose -f docker-compose.k1.yml up -d --build
 ```
 
 访问 `https://<K1_IP>:443`（自签名证书，浏览器点"高级→继续"）。
@@ -77,18 +81,22 @@ docker compose --profile standalone up -d --build
 ### Swarm 分布式部署
 
 ```bash
-# K1 端（TTS 卸载到 PC，释放 ~1.5GB 内存）
-TTS_HOST=192.168.1.100 docker compose up -d --build
+# 1. 配置环境变量
+cp .env.swarm.example .env.swarm
+# 编辑 PC_IP 为你的 PC 实际 IP
 
-# PC 端（仅 TTS 服务）
-docker compose --profile swarm-pc up -d --build
+# 2. PC 端启动 TTS（MeloTTS 容器）
+docker compose -f docker-compose.swarm.yml --profile pc up -d --build
 
-# 切换回本地模式
-docker compose down
-docker compose --profile standalone up -d
+# 3. K1 端启动核心服务（Gateway + YOLO + ASR）
+docker compose -f docker-compose.swarm.yml --profile k1 up -d --build
+
+# 切换回 K1 本地模式
+docker compose -f docker-compose.swarm.yml down
+docker compose -f docker-compose.k1.yml up -d
 ```
 
-> 💡 **切换原理**：`TTS_HOST` 环境变量控制 TTS 路由。不设 = 本地 TTS，设 PC_IP = 远程 TTS。
+> 💡 **切换原理**：Swarm 模式下 K1 不运行 TTS 容器，Gateway 将 `/tts` 请求路由到 PC 的 MeloTTS 服务（通过 `PC_IP` 环境变量）。
 
 ### 容器管理
 
@@ -103,11 +111,14 @@ docker compose down         # 停止
 ### 按需启动
 
 ```bash
-# 仅目标检测 + 对话
-docker compose up -d yolo gateway
+# 仅目标检测 + 对话（K1 默认 edge-tts）
+docker compose -f docker-compose.k1.yml up -d yolo tts-edge gateway
 
-# 仅语音功能（需 PC TTS）
-TTS_HOST=192.168.1.100 docker compose up -d asr gateway
+# K1 离线模式（MeloTTS 替代 edge-tts）
+docker compose -f docker-compose.k1.yml --profile offline up -d yolo tts gateway
+
+# Swarm 模式（TTS 卸载到 PC）
+docker compose -f docker-compose.swarm.yml --profile k1 up -d
 ```
 
 ## API
@@ -131,9 +142,9 @@ TTS_HOST=192.168.1.100 docker compose up -d asr gateway
 | 后端 | FastAPI + Uvicorn |
 | 目标检测 | YOLOv8n 双模型 ONNX — 银饰 8 类 + 服装 2 类 (spacemit-ort) |
 | 语音识别 | SenseVoice (spacemit_asr) |
-| 语音合成 | MeloTTS (spacemit_tts) |
+| 语音合成 | edge-tts（K1 默认）/ MeloTTS（离线/PC） |
 | 大语言模型 | Ollama + Qwen2.5-Instruct |
-| 容器化 | Docker Compose (4 容器 host 网络) |
+| 容器化 | Docker Compose (5 容器 host 网络 · K1 双 TTS 后端) |
 | 目标平台 | riscv64 (SpacemiT K1) |
 
 ## 许可证

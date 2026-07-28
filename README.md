@@ -36,7 +36,7 @@
 |:---:|------|------|
 | 👁️ **视觉识别** | YOLOv8n 双模型 (ONNX) | 银饰 8 类 + 服装 2 类 · Pipeline 串行 · <1s 推理 |
 | 👂 **语音识别** | SenseVoice | 中文语音 → 文字 · 高精度 ASR |
-| 🗣️ **语音合成** | edge-tts / MeloTTS | 文字 → 自然语音 · 可卸载到 PC 运行 |
+| 🗣️ **语音合成** | edge-tts / MeloTTS | 文字 → 自然语音 · K1 轻量联网 / 离线本地 / 可卸载到 PC |
 | 🧠 **智能对话** | Qwen2.5-0.5B LoRA | 苗族文化专家问答 · Ollama 部署 · 模型自动发现 · K1 推理优化 |
 | 🔧 **模型微调** | Qwen2.5-0.5B LoRA | Unsloth 高效微调 · GGUF 量化 · 端侧运行 |
 
@@ -106,7 +106,7 @@ miao-sage/
 │   │   ├── asr_server.py             # ASR 语音识别微服务（K1）
 │   │   ├── tts_server.py             # TTS 语音合成微服务（K1）
 │   │   ├── asr_whisper.py            # Whisper ASR（PC 可选）
-│   │   ├── tts_pc.py                 # TTS PC 服务（edge-tts/piper）
+│   │   ├── tts_pc.py                 # TTS PC 服务（MeloTTS）
 │   │   ├── perf.py                   # 性能监控模块
 │   │   └── requirements.txt
 │   ├── src/                          # SvelteKit 前端源码
@@ -166,10 +166,10 @@ miao-sage/
 
 ```bash
 cd my-app
-docker compose --profile standalone up -d --build
+docker compose -f docker-compose.k1.yml up -d --build
 ```
 
-> 四容器各司其职（YOLO / ASR / TTS / Gateway），或通过 `TTS_HOST` 切换 Swarm 模式。
+> 五容器各司其职（YOLO / ASR / TTS edge-tts + MeloTTS / Gateway），或通过 Swarm 编排卸载 TTS 到 PC。
 
 ### 📦 方式三：静态单进程（轻量 · 2GB 内存可用）
 
@@ -194,7 +194,7 @@ bash deploy/deploy-k1-docker.sh root@192.168.x.x static
 ┌──── K1 板 (riscv64) ─────────────────┐     ┌──── PC (x86_64) ────┐
 │                                       │     │                      │
 │  🚪 Gateway  :443  ← SPA + API 路由   │     │  🗣️ TTS  :8002     │
-│  👁️ YOLO    :8000 ← 双模型物体检测    │     │  edge-tts / piper   │
+│  👁️ YOLO    :8000 ← 双模型物体检测    │     │  MeloTTS            │
 │  👂 ASR     :8001 ← SenseVoice 语音   │     │                      │
 │  🧠 Ollama  :11434                    │     │                      │
 │                                       │     │                      │
@@ -225,8 +225,9 @@ cp .env.swarm.example .env.swarm
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PC_IP` | `192.168.1.100` | **必改** — PC 的局域网 IP |
-| `TTS_BACKEND` | `edge-tts` | TTS 后端：`edge-tts`（需联网）/ `piper`（离线） |
-| `TTS_VOICE` | `zh-CN-XiaoxiaoNeural` | edge-tts 中文音色（甜美女声） |
+| `TTS_LANGUAGE` | `ZH` | MeloTTS 语言代码 |
+| `TTS_SPEAKER` | `0` | MeloTTS 说话人 ID（0=默认女声） |
+| `TTS_SPEED` | `1.0` | 语速 (0.5-2.0) |
 | `TTS_MAX_LEN` | `300` | 单次合成最大字符数（PC 端可设更大） |
 | `OLLAMA_MODEL` | （自动发现） | K1 端 Ollama 模型名，留空自动匹配 miao*/qwen* |
 | `YOLO_MODEL` | `yolov8n.onnx` | YOLO 检测模型 |
@@ -236,7 +237,7 @@ cp .env.swarm.example .env.swarm
 ```bash
 # 在 PC 上执行（需要 Docker）
 cd my-app
-docker compose --profile swarm-pc up -d --build
+docker compose -f docker-compose.swarm.yml --profile pc up -d --build
 
 # 验证 TTS 就绪
 curl http://localhost:8002/health
@@ -247,7 +248,7 @@ curl http://localhost:8002/health
 ```bash
 # 在 K1 上执行
 cd /path/to/MiaoSage/my-app
-TTS_HOST=<PC_IP> docker compose up -d --build
+docker compose -f docker-compose.swarm.yml --profile k1 up -d --build
 
 # 验证全链路
 curl -k https://localhost/health
@@ -266,32 +267,36 @@ https://<K1_IP>:443
 | 现象 | 可能原因 | 解决 |
 |------|---------|------|
 | TTS 无响应 | PC_IP 配置错误 | `ping <PC_IP>` 确认 K1 能访问 PC |
-| TTS 合成失败 | PC 无法访问微软 TTS 服务 | 检查 PC 网络，或切换 `TTS_BACKEND=piper` |
+| TTS 合成失败 | MeloTTS 模型未下载或路径错误 | 检查 PC 端模型文件，确认 `/app/models` 挂载正确 |
 | 网关 503 | PC 防火墙阻止 8002 端口 | `ufw allow 8002` 或关闭防火墙测试 |
 | PC 容器启动失败 | 镜像拉取慢 | 挂代理或手动 `docker pull python:3.11-slim-bookworm` |
 
 ### TTS 后端选择
 
-| 后端 | 网络 | 音质 | 内存 | 首次启动 |
-|------|:--:|:--:|------|---------|
-| **edge-tts**（默认） | 需联网 | ⭐⭐⭐⭐⭐ | ~200MB | 即时 |
-| **piper** | 离线 | ⭐⭐⭐ | ~500MB | 需下载语音模型 |
+| 模式 | 后端 | 网络 | 音质 | 内存 | 说明 |
+|------|------|:--:|:--:|------|------|
+| **K1 默认** | edge-tts | 需联网 | ⭐⭐⭐⭐⭐ | ~100MB | 微软免费 API，纯 Python 无架构依赖 |
+| **K1 离线** | MeloTTS | 离线 | ⭐⭐⭐⭐ | ~1.5GB | spacemit-ort 推理，`--profile offline` |
+| **Swarm PC** | MeloTTS | 离线 | ⭐⭐⭐⭐ | ~2GB | Docker 容器化，Torch CPU 推理 |
 
-> **推荐**：开发/联网环境用 edge-tts（免模型、音质最佳），生产离线环境用 piper。
+> **推荐**：日常使用 K1 默认 edge-tts（轻量高音质），无网络时切换 `--profile offline` 用 MeloTTS，内存紧张时 Swarm 卸载 TTS 到 PC。
 
-切换为 piper 离线模式：
+#### K1 切换为 MeloTTS 离线模式
 
 ```bash
-# 在 .env.swarm 中设置
-TTS_BACKEND=piper
+# 停止 edge-tts，启动 MeloTTS（需先构建 Dockerfile.tts）
+docker compose -f docker-compose.k1.yml --profile offline up -d --build tts
+```
 
-# 下载中文语音模型（一次性）
-mkdir -p /opt/piper && cd /opt/piper
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json
+#### Swarm PC 端 MeloTTS
 
-# 启动时挂载模型目录（修改 docker-compose.swarm.yml 中 tts-pc 的 volumes）
-#   - /opt/piper:/opt/piper:ro
+模型首次启动时自动下载到 `/app/models`，建议挂载 volume 持久化：
+
+```yaml
+# docker-compose.swarm.yml 中 tts-pc 的 volumes
+tts-pc:
+  volumes:
+    - melo-models:/app/models
 ```
 
 ---
